@@ -1,0 +1,1095 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Argus — AI Visibility Monitor (POC · single-model)</title>
+<style>
+:root{--bg:#0a0f16;--panel:#101722;--panel2:#0c1320;--line:#1c2938;--line2:#24344a;--txt:#e8eef7;--mut:#8ba1bb;--dim:#5a7189;--acc:#2dd4a7;--accbg:rgba(45,212,167,.12);--blue:#38bdf8;--amber:#f2b04c;--rose:#f2708a;--vio:#a78bfa;--c0:#141d2a;--c1:#a87f33;--c2:#2dd4a7;--c3:#8bf2cf}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--txt);font:14px/1.55 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;display:flex;overflow:hidden}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+#fatal{display:none;position:fixed;left:0;right:0;top:0;z-index:99;background:#3b0d18;color:#ffb3c0;padding:10px 16px;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap;border-bottom:2px solid #f2708a}
+#side{width:238px;min-width:238px;background:var(--panel2);border-right:1px solid var(--line);display:flex;flex-direction:column;transition:width .2s,min-width .2s}
+/* M7.5 rail collapse: icons only, still fully usable. The width transition is
+   200ms — inside the 150–250ms band §11 freezes, so it does not read as a
+   different product state. */
+#side.rail{width:64px;min-width:64px}
+.logo{padding:18px 16px 10px;border-bottom:1px solid var(--line)}
+.logo h1{font-size:17px;letter-spacing:.18em;color:var(--acc)}
+.logo .sub{color:var(--dim);font-size:10.5px;letter-spacing:.14em;margin-top:2px}
+nav{flex:1;overflow:auto;padding:8px}
+/* The group header is a real control: it collapses. It was a static label until
+   M7.5, which meant a long nav could not be shortened without the rail. */
+.ng{display:flex;align-items:center;gap:5px;width:100%;background:transparent;border:0;font:inherit;font-size:10px;letter-spacing:.16em;color:var(--dim);padding:14px 10px 4px;cursor:pointer;text-align:left}
+.ng:hover{color:var(--mut)}
+.ng .chev{font-size:8px;width:8px;display:inline-block}
+.rail .ng{justify-content:center;padding:14px 0 4px}
+.rail .ng .gtx{display:none}
+.ni{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;color:var(--mut);cursor:pointer;font-weight:500;font-size:13.5px}
+.ni:hover{background:#131d2c;color:var(--txt)}
+.ni.on{background:var(--accbg);color:var(--acc)}
+.ni .ico{width:14px;text-align:center;flex:none}
+.rail .ni{justify-content:center;padding:8px 0}
+.rail .ni .lbl{display:none}
+.ni:focus-visible,.ng:focus-visible,.railbtn:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.nb{margin-left:auto;background:var(--rose);color:#fff;font-size:10px;padding:1px 7px;border-radius:99px;font-weight:700}
+.railbtn{display:flex;align-items:center;gap:8px;width:100%;background:transparent;border:0;border-top:1px solid var(--line);color:var(--dim);font:inherit;font-size:11.5px;padding:11px 16px;cursor:pointer;text-align:left}
+.railbtn:hover{color:var(--txt)}
+.rail .railbtn{justify-content:center;padding:11px 0}
+.rail .railbtn .lbl{display:none}
+#wrap{flex:1;display:flex;flex-direction:column;min-width:0}
+#topbar{height:58px;min-height:58px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 22px;background:var(--panel2)}
+.hat{display:flex;background:#0a111c;border:1px solid var(--line2);border-radius:9px;padding:3px}
+.hat button{border:0;background:transparent;color:var(--mut);padding:6px 14px;border-radius:7px;cursor:pointer;font-weight:600;font-size:12.5px}
+.hat button.on{background:var(--acc);color:#04231a}
+.hat button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+/* M7.5 — the brand chip is READ-ONLY and carries a lock. The old topbar had a
+   target <select> here, which advertised a choice the workspace deliberately
+   does not offer and had to enumerate every registered brand to render. */
+.brandchip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:5px 11px;border-radius:9px;border:1px solid var(--line2);background:var(--panel);color:var(--mut);cursor:help}
+.brandchip b{color:var(--txt);font-weight:600}
+.brandchip .lk{opacity:.75}
+/* M7.5 — lineage moved OUT of the topbar into a footer strip. The topbar is now
+   exactly: brand chip · hat · Tour · Reset. The strip is hidden in print,
+   because a report that reaches paper with the console's chrome on it is a report
+   somebody has to clean up. */
+#foot{border-top:1px solid var(--line);background:var(--panel2);padding:7px 22px;font-size:10.5px;color:var(--dim);display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+#foot .k{color:#3f5468;letter-spacing:.12em}
+/* M7.5 — one PageHeader shape for every screen: title, one-line subtitle, and a
+   lineage chip row. Absent values are OMITTED rather than rendered blank — a
+   chip reading "geo —" implies a value exists and is missing. */
+.phead{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:20px}
+.phead h2{margin-bottom:4px}
+.pchips{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.pchip{font-size:10px;letter-spacing:.06em;padding:3px 9px;border-radius:99px;border:1px solid var(--line2);color:var(--mut)}
+.pchip .pk{color:var(--dim)}
+.oper-lock{max-width:640px;background:var(--panel);border:1px solid var(--line2);border-radius:12px;padding:20px}
+.oper-lock input{letter-spacing:.06em}
+.footbtn{border:1px solid var(--line2);background:transparent;color:var(--txt);border-radius:8px;padding:7px 13px;font:inherit;font-size:12.5px;cursor:pointer}
+.footbtn:hover{border-color:var(--acc);color:var(--acc)}
+.footbtn[disabled]{opacity:.4;cursor:not-allowed}
+#main{flex:1;overflow:auto;padding:26px 30px}
+h2{font-size:19px;margin-bottom:4px}
+h3{font-size:15px;margin:18px 0 6px}
+.lead{color:var(--mut);font-size:13px;margin-bottom:20px;max-width:860px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+.row{display:flex;gap:16px;flex-wrap:wrap}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.mt{margin-top:16px}.mt8{margin-top:8px}.mt24{margin-top:24px}
+.lbl{font-size:10.5px;letter-spacing:.13em;color:var(--dim);margin-bottom:8px}
+.big{font-size:32px;font-weight:700}
+.tile{cursor:pointer;transition:border-color .15s}
+.tile:hover{border-color:var(--acc)}
+.pos{color:var(--acc)}.neg{color:var(--rose)}.mut{color:var(--mut)}.dimc{color:var(--dim)}
+.badge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.06em;padding:2px 8px;border-radius:99px}
+.b-new{background:rgba(242,176,76,.15);color:var(--amber)}
+.b-true{background:rgba(45,212,167,.15);color:var(--acc)}
+.b-false{background:rgba(242,112,138,.15);color:var(--rose)}
+.b-unk{background:rgba(139,161,187,.15);color:var(--mut)}
+.b-op{background:rgba(139,161,187,.10);color:var(--dim)}
+.b-ro{background:rgba(167,139,250,.15);color:var(--vio)}
+.b-pf{background:rgba(56,189,248,.15);color:var(--blue)}
+.b-ex{background:rgba(242,176,76,.12);color:var(--amber);border:1px dashed rgba(242,176,76,.4)}
+.b-res{background:transparent;border:1px solid var(--acc);color:var(--acc)}
+.btn{border:0;border-radius:9px;padding:10px 18px;font-weight:700;font-size:13.5px;cursor:pointer;background:var(--acc);color:#04231a}
+.btn:hover{filter:brightness(1.1)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.ghost{background:transparent;border:1px solid var(--line2);color:var(--txt)}
+.btn.ghost:hover{border-color:var(--acc);color:var(--acc)}
+.btn.sm{padding:6px 12px;font-size:12px;border-radius:7px}
+.btn.danger{background:transparent;border:1px solid var(--line2);color:var(--rose)}
+.btn.danger:hover{border-color:var(--rose)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:10.5px;letter-spacing:.1em;color:var(--dim);text-align:left;padding:7px 10px;border-bottom:1px solid var(--line)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:hover td{background:rgba(255,255,255,.015)}
+.bar{height:8px;border-radius:99px;background:var(--c0);overflow:hidden;min-width:80px}
+.bar i{display:block;height:100%;background:var(--acc);border-radius:99px}
+.bar.amber i{background:var(--amber)}
+.mcell{width:14px;height:14px;border-radius:3px;display:inline-block;margin:1px;cursor:pointer}
+.t0{background:var(--c0)}.t1{background:var(--c1)}.t2{background:var(--c2)}.t3{background:var(--c3)}
+.mcell:hover{outline:2px solid #fff}
+.mrow{display:flex;align-items:center;gap:8px;padding:3px 0}
+.mname{width:340px;min-width:340px;font-size:11.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.legend{display:flex;gap:16px;font-size:11px;color:var(--mut);margin:10px 0}
+.legend span{display:flex;align-items:center;gap:6px}
+.qbox{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:8px;padding:10px 14px;margin:8px 0;font-size:13px;font-style:italic}
+.qmeta{font-size:10.5px;color:var(--dim);font-style:normal;margin-top:4px;letter-spacing:.05em}
+.claim{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;cursor:pointer;transition:border-color .15s}
+.claim:hover{border-color:var(--acc)}
+.claim .txt{font-weight:600;font-size:14px;margin:8px 0 6px}
+.claim .snip{color:var(--mut);font-size:12.5px;font-style:italic}
+.fchips{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+.fchip{border:1px solid var(--line2);background:transparent;color:var(--mut);border-radius:99px;padding:5px 13px;font-size:12px;cursor:pointer;font-weight:600}
+.fchip.on{background:var(--accbg);border-color:var(--acc);color:var(--acc)}
+.vbtns{display:flex;gap:10px;margin:12px 0}
+.vbtn{flex:1;border:1px solid var(--line2);background:transparent;border-radius:9px;padding:12px;font-weight:700;cursor:pointer;color:var(--mut);font-size:14px}
+.vbtn.on-true{background:rgba(45,212,167,.15);border-color:var(--acc);color:var(--acc)}
+.vbtn.on-false{background:rgba(242,112,138,.15);border-color:var(--rose);color:var(--rose)}
+.vbtn.on-unknown{background:rgba(139,161,187,.15);border-color:var(--mut);color:var(--txt)}
+textarea,input[type=text],select{width:100%;background:#0a111c;border:1px solid var(--line2);border-radius:8px;color:var(--txt);padding:9px 12px;font:inherit;font-size:13px}
+textarea{resize:vertical;min-height:64px}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--acc)}
+#modal{position:fixed;inset:0;display:none;z-index:50}
+#modal.open{display:block}
+.mback{position:absolute;inset:0;background:rgba(4,8,14,.72);display:flex;align-items:flex-start;justify-content:center;padding:40px 20px;overflow:auto}
+.mcard{background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:22px;max-width:820px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+#toasts{position:fixed;right:20px;bottom:86px;z-index:60;display:flex;flex-direction:column;gap:8px}
+.toast{background:#0d1a17;border:1px solid var(--acc);color:var(--acc);padding:11px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.toast.warn{border-color:var(--amber);color:var(--amber)}
+.step{display:flex;flex-direction:column;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;cursor:pointer;min-width:150px;flex:1}
+.step:hover{border-color:var(--acc)}
+.step .n{font-size:10px;color:var(--dim);letter-spacing:.14em}
+.step .t{font-weight:700}
+.step .d{font-size:11.5px;color:var(--mut)}
+.arrow{align-self:center;color:var(--dim);font-size:18px}
+.banner{background:rgba(242,176,76,.08);border:1px solid rgba(242,176,76,.35);border-radius:10px;padding:12px 16px;font-size:13px;color:var(--amber);margin-bottom:18px}
+.note{font-size:11.5px;color:var(--dim);line-height:1.6}
+.ok{color:var(--acc)}.warn{color:var(--amber)}.err{color:var(--rose)}
+.pcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+.pcard .em{font-size:22px}
+.lint{font-size:12px;margin-top:8px;min-height:18px}
+.logbox{background:#070b12;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:11px;color:var(--dim);height:130px;overflow:auto;line-height:1.7}
+.pgmeter{font-size:11px;color:var(--dim);margin:6px 0}
+.chatwrap{display:grid;grid-template-columns:290px 1fr;gap:16px;height:calc(100vh - 190px);min-height:420px}
+.chatleft{overflow:auto;padding-right:4px}
+.chipq{display:block;width:100%;text-align:left;margin:6px 0;border:1px solid var(--line2);background:transparent;color:var(--mut);border-radius:10px;padding:9px 12px;font-size:12.5px;cursor:pointer}
+.chipq:hover{border-color:var(--acc);color:var(--txt)}
+.chatmain{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
+#chatthread{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:82%;border-radius:12px;padding:10px 14px;font-size:13.5px;line-height:1.55}
+.msg.you{align-self:flex-end;background:var(--accbg);border:1px solid rgba(45,212,167,.3)}
+.msg.bot{align-self:flex-start;background:var(--panel2);border:1px solid var(--line)}
+.msg .btn{margin:8px 6px 0 0}
+.chatinrow{display:flex;gap:10px;padding:12px;border-top:1px solid var(--line)}
+.chatinrow input{flex:1}
+#fab{position:fixed;right:22px;bottom:22px;z-index:120;width:52px;height:52px;border-radius:50%;border:1px solid var(--line2);background:var(--panel);font-size:22px;cursor:pointer;box-shadow:0 10px 30px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}
+#fab:hover{border-color:var(--acc)}
+.tcard{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;width:min(640px,94vw);background:var(--panel);border:1px solid var(--acc);border-radius:14px;padding:14px 18px;z-index:300;box-shadow:0 20px 60px rgba(0,0,0,.55)}
+.tour-hi{outline:2px solid var(--acc);outline-offset:3px;border-radius:12px;animation:tpulse 1.6s infinite}
+@keyframes tpulse{50%{box-shadow:0 0 0 10px rgba(45,212,167,.08)}}
+@media print{#side,#topbar,#foot,.no-print,#toasts,#fatal,#fab,#tourbox{display:none!important}body{background:#fff;color:#000;overflow:visible;display:block}#wrap{display:block}#main{overflow:visible;padding:0}.card{border-color:#bbb;background:#fff;color:#000}.big,.pos,.neg{color:#000}.badge{border:1px solid #999;color:#000;background:#fff}.qbox{background:#f5f5f5;color:#000;border-color:#999}.note,.dimc,.mut,.lead{color:#333}.pchip{border-color:#ccc;color:#333}}
+</style>
+</head>
+<body>
+<div id="fatal"></div>
+<aside id="side"></aside>
+<div id="wrap">
+  <header id="topbar"></header>
+  <main id="main"><div style="padding:40px;color:#8ba1bb">Loading Argus…</div></main>
+  <footer id="foot" class="no-print"></footer>
+</div>
+<div id="modal"></div>
+<div id="toasts"></div>
+<button id="fab" title="Ask Buddy" onclick="App.nav('chat')">🤖</button>
+<div id="tourbox"></div>
+<noscript><div style="padding:20px;color:#f2708a">JavaScript is disabled — Argus cannot render.</div></noscript>
+
+<script>
+window.onerror=function(msg,src,line){var d=document.getElementById("fatal");if(d){d.style.display="block";d.textContent="Argus hit a script error → "+msg+"  (line "+line+")\nIf this persists, report this line."}return false};
+
+/* ============ utils ============ */
+function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+function fmt(x){return Math.round(x)+"%"}
+function clone(o){return JSON.parse(JSON.stringify(o))}
+function h32(s){var h=2166136261;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0)/4294967295}
+function qbtn(txt){return '<button class="chipq" onclick="App.askq(\''+txt+'\')">'+esc(txt)+"</button>"}
+function nbtn(label,screen){return '<button class="btn ghost sm" onclick="App.nav(\''+screen+'\')">'+label+"</button>"}
+function hbtn(label){return '<button class="btn sm" onclick="App.hatGo()">'+label+"</button>"}
+function svgBars(items,unit){var H=items.length*30+8,out='<svg viewBox="0 0 360 '+H+'" style="width:100%;height:auto">';
+ items.forEach(function(it,i){var y=i*30+4;
+  out+='<text x="0" y="'+(y+9)+'" font-size="10" fill="#8ba1bb">'+esc(it.label.slice(0,46))+"</text>";
+  out+='<rect x="0" y="'+(y+13)+'" width="300" height="9" rx="4.5" fill="#141d2a"/>';
+  out+='<rect x="0" y="'+(y+13)+'" width="'+Math.max(2,300*it.v/100)+'" height="9" rx="4.5" fill="'+(it.warn?"#f2b04c":"#2dd4a7")+'"/>';
+  out+='<text x="306" y="'+(y+22)+'" font-size="11" fill="#e8eef7" font-family="ui-monospace,monospace">'+it.v+(unit||"%")+"</text>"});
+ return out+"</svg>"}
+function svgCI(v,lo,hi){function X(x){return 20+(x/100)*320}
+ return '<svg viewBox="0 0 360 64" style="width:100%;height:auto">'+
+ '<rect x="'+X(lo)+'" y="26" width="'+(X(hi)-X(lo))+'" height="6" rx="3" fill="#2dd4a7" opacity="0.3"/>'+
+ '<line x1="'+X(lo)+'" y1="29" x2="'+X(hi)+'" y2="29" stroke="#2dd4a7" stroke-width="2"/>'+
+ '<line x1="'+X(lo)+'" y1="20" x2="'+X(lo)+'" y2="38" stroke="#2dd4a7" stroke-width="2"/>'+
+ '<line x1="'+X(hi)+'" y1="20" x2="'+X(hi)+'" y2="38" stroke="#2dd4a7" stroke-width="2"/>'+
+ '<circle cx="'+X(v)+'" cy="29" r="5" fill="#2dd4a7"/>'+
+ '<text x="'+X(v)+'" y="12" font-size="11" fill="#e8eef7" text-anchor="middle" font-family="ui-monospace,monospace">'+fmt(v)+"</text>"+
+ '<text x="'+X(lo)+'" y="54" font-size="10" fill="#8ba1bb" text-anchor="middle">'+fmt(lo)+"</text>"+
+ '<text x="'+X(hi)+'" y="54" font-size="10" fill="#8ba1bb" text-anchor="middle">'+fmt(hi)+"</text></svg>"}
+
+/* ============ seed data ============ */
+var RET="GreenBasket";
+var MODEL={name:"gemini-2.5-flash",ver:"gemini-2.5-flash@2025-06"};
+var RUNS=10;
+var MISSIONS=[
+ {id:"m1", q:"What are the best supermarkets for buying groceries in London?",k:"OPEN"},
+ {id:"m2", q:"Where can I find affordable organic groceries in Manchester?",k:"OPEN"},
+ {id:"m3", q:"Which UK supermarket has the best own-brand range?",k:"OPEN"},
+ {id:"m4", q:"I need a weekly family shop for £60 in Birmingham — where should I go?",k:"OPEN"},
+ {id:"m5", q:"Best supermarket for a last-minute dinner delivery tonight in Leeds?",k:"OPEN"},
+ {id:"m6", q:"Does GreenBasket sell organic wine?",k:"DIRECT"},
+ {id:"m7", q:"Is GreenBasket cheaper than Tesco for a standard basket?",k:"DIRECT"},
+ {id:"m8", q:"Which supermarket is best for gluten-free products?",k:"OPEN"},
+ {id:"m9", q:"Where can I buy sustainable, low-waste groceries online in the UK?",k:"OPEN"},
+ {id:"m10",q:"Which supermarkets have good loyalty schemes?",k:"OPEN"},
+ {id:"m11",q:"Best supermarket for fresh coffee beans in the UK?",k:"OPEN"},
+ {id:"m12",q:"Does GreenBasket offer free click-and-collect?",k:"DIRECT"}];
+var HIT={
+ m1:"For weekly groceries in London, Tesco and Sainsbury's are the defaults — GreenBasket is worth a look for own-brand staples and same-day delivery slots.",
+ m2:"For organic in Manchester, GreenBasket is often among the cheaper options for staples like oats and milk, though Ocado's organic range is deeper.",
+ m3:"GreenBasket keeps a tight own-brand catalogue that is good value for the basics, though M&S wins on premium own-label.",
+ m4:"A £60 family shop stretches further at Aldi, but GreenBasket's family boxes are convenient and delivery is free over £30.",
+ m5:"For tonight's dinner in Leeds, GreenBasket has same-day slots starting at £2.99 off-peak.",
+ m6:"Yes — GreenBasket sells organic wine, mostly own-label plus a few named estates.",
+ m7:"GreenBasket isn't the cheapest for a standard basket — Aldi undercuts it — but regular promotions narrow the gap.",
+ m8:"For gluten-free, GreenBasket's own-brand Free From range is surprisingly broad and well priced.",
+ m9:"GreenBasket has plastic-free pledges and a small low-waste aisle, but Ocado's sustainable range is bigger.",
+ m10:"GreenBasket points can now be redeemed against delivery fees — earning is simple too.",
+ m11:"For fresh coffee beans, GreenBasket's roastery own-label is a hidden gem at the price.",
+ m12:"Yes — GreenBasket click-and-collect is free on orders over £30."};
+var MISS={
+ m1:"London's go-to supermarkets are Tesco, Sainsbury's and ASDA, with Ocado strong on delivery quality.",
+ m2:"Ocado and Tesco lead for organic groceries in Manchester; Abel & Cole if you want a box scheme.",
+ m3:"Tesco's Finest and M&S own-brands are usually cited as best-in-class for own-label ranges.",
+ m4:"For a £60 weekly shop, most families default to Aldi or ASDA.",
+ m5:"Deliveroo and Uber Eats cover last-minute meals; Ocado needs a day's notice.",
+ m6:"Organic wine is hit-and-miss at most grocers; Tesco and Waitrose have the most reliable ranges.",
+ m7:"Aldi and Lidl undercut most rivals on a standard basket; GreenBasket sits mid-table on price.",
+ m8:"Tesco's Free From is the safe recommendation; GreenBasket doesn't really register for gluten-free.",
+ m9:"For low-waste shopping, Ocado and Abel & Cole lead; GreenBasket is barely mentioned.",
+ m10:"Tesco Clubcard and Sainsbury's Nectar dominate any loyalty conversation.",
+ m11:"Waitrose and Ocado carry the widest specialist bean ranges.",
+ m12:"Most big supermarkets offer free click-and-collect; check each one's minimum spend."};
+var BASE={1:0.44,2:0.48,3:0.52};
+var TW={
+ 1:{m1:0.9,m2:0.85,m3:0.7,m4:0.8,m5:1.1,m6:1.3,m7:0.6,m8:0.5,m9:0.5,m10:1.0,m11:0.8,m12:1.3},
+ 2:{m1:0.9,m2:0.85,m3:0.7,m4:0.8,m5:1.1,m6:1.3,m7:0.6,m8:0.5,m9:0.5,m10:1.15,m11:0.8,m12:1.3},
+ 3:{m1:0.95,m2:1.1,m3:0.75,m4:0.85,m5:1.1,m6:1.3,m7:0.65,m8:1.6,m9:0.7,m10:1.15,m11:0.85,m12:1.3}};
+var T3R={1:0.5,2:0.55,3:0.57};
+var COMPS={1:66,2:62,3:59};
+var PMX={
+ 1:{Penny:10,Dee:26,Nia:30,Marge:23,Otto:4,Sam:14},
+ 2:{Penny:12,Dee:27,Nia:31,Marge:24,Otto:9,Sam:15},
+ 3:{Penny:13,Dee:28,Nia:32,Marge:25,Otto:11,Sam:27}};
+var COMPDISP=[["Tesco",58,"range · weekly shop"],["Sainsbury's",47,"weekly shop · quality"],["Ocado",39,"online · organic range"],["Aldi",35,"price"],["Lidl",28,"price"],["ASDA",22,"value"],["M&S",18,"premium quality"]];
+function q(run,mi,text){return{run:run,mi:mi,text:text}}
+var PSEED=[
+ {id:"p1",name:"Penny",em:"🪙",tag:"price-sensitive",ver:1,status:"CORE",prompt:"You are Penny, a price-conscious grocery shopper in {city}.\nBudget is tight: you compare prices across retailers and switch for meaningful savings. Own-brand products are fine when quality holds. You have no store loyalty.\nWhen recommending, name specific retailers and products, with brief reasoning for your top picks.\nNever claim to be an AI. Never favour a retailer unless your criteria genuinely lead you there."},
+ {id:"p2",name:"Dee",em:"🎀",tag:"brand-loyal",ver:1,status:"CORE",prompt:"You are Dee, a brand-loyal shopper in {city}.\nYou buy names you trust and distrust own-brand alternatives. You will pay a little more for known brands.\nName specific brands and retailers with brief reasoning.\nNever claim to be an AI. Never favour a retailer unless your criteria genuinely lead you there."},
+ {id:"p3",name:"Nia",em:"⏱",tag:"convenience / last-minute",ver:1,status:"CORE",prompt:"You are Nia, a time-pressed shopper in {city}.\nSpeed of delivery dominates every decision; you accept a price premium for same-day slots.\nName specific retailers and their fastest options, with brief reasoning.\nNever claim to be an AI. Never favour a retailer unless your criteria genuinely lead you there."},
+ {id:"p4",name:"Marge",em:"👨‍👩‍👧",tag:"family bulk buyer",ver:1,status:"CORE",prompt:"You are Marge, a family bulk buyer in {city}.\nYou plan one big weekly shop, care about variety and multipacks, and watch the total basket cost.\nName specific retailers suited to big weekly shops, with brief reasoning.\nNever claim to be an AI. Never favour a retailer unless your criteria genuinely lead you there."},
+ {id:"p5",name:"Otto",em:"🌱",tag:"organic / eco-driven",ver:1,status:"CORE",prompt:"You are Otto, an organic and sustainability-driven shopper in {city}.\nYou prioritise organic certification, plastic-free packaging and ethical sourcing, and accept paying more.\nName specific retailers strong on sustainability, with brief reasoning.\nNever claim to be an AI. Never favour a retailer unless your criteria genuinely lead you there."},
+ {id:"p6",name:"Sam",em:"🌾",tag:"gluten-free",ver:1,status:"CORE",prompt:"You are Sam, a coeliac shopper in {city}.\nGluten-free availability dominates: dedicated Free From ranges matter more than price.\nName specific retailers with strong Free From sections, with brief reasoning.\nNever claim to be an AI. Never favour a retailer unless your criteria genuinely lead you there."}];
+var CSEED=[
+ {id:"c1",text:"GreenBasket's organic range is limited compared to Ocado and Tesco",type:"RETAILER-ONLY",status:"NEW",first:2,obs:"6/10 runs",needs:"catalog range feed (organic category)",quotes:[q(1,"m2","…for organic groceries in Manchester, Ocado and Tesco have the deepest organic ranges; GreenBasket's organic section is solid but smaller…"),q(4,"m3","…Ocado leads on specialist ranges; GreenBasket keeps a tight, mostly own-brand catalogue…")]},
+ {id:"c2",text:"GreenBasket is one of the cheaper options for organic staples",type:"RETAILER-ONLY",status:"NEW",first:2,obs:"5/10 runs",needs:"organic price basket feed",quotes:[q(2,"m2","…GreenBasket is often among the cheaper options for organic staples like oats and milk…")]},
+ {id:"c3",text:"GreenBasket operates 280+ stores across the UK",type:"PUBLIC FACT",status:"NEW",first:2,obs:"9/10 runs",needs:null,precheck:true,quotes:[q(5,"m1","…GreenBasket, which operates 280+ stores across the UK, also delivers nationally…")]},
+ {id:"c4",text:"GreenBasket delivery starts at £2.99",type:"PUBLIC FACT",status:"TRUE",first:1,obs:"7/10 runs",needs:null,note:"Confirmed on delivery page & at checkout.",vat:"2 weeks ago · Retailer Review",quotes:[q(1,"m5","…GreenBasket delivery slots start at £2.99 off-peak…")]},
+ {id:"c5",text:"GreenBasket is best for budget weekly shops",type:"OPINION",status:"OPINION",first:1,obs:"3/10 runs",quotes:[q(3,"m1","…if budget is the priority, Aldi and Lidl win; GreenBasket is a good middle ground…")]},
+ {id:"c6",text:"GreenBasket does not sell gluten-free own-brand products",type:"RETAILER-ONLY",status:"FALSE",first:1,obs:"4/10 runs",needs:"catalog range feed (Free From)",note:"Ops flagged: verified against catalog.",corr:"We launched 42 gluten-free own-brand lines in March. Action taken: structured-data push completed last week.",vat:"2 weeks ago · Retailer Review",resNote:"GF mission mentions moved after the structured-data push — see the audit #3 diff",quotes:[q(2,"m8","…GreenBasket doesn't appear to sell gluten-free own-brand products; Tesco's Free From range is the safest bet…")]},
+ {id:"c7",text:"Aldi and Lidl are cheaper than GreenBasket for standard baskets",type:"RETAILER-ONLY",status:"UNKNOWN",first:2,obs:"7/10 runs",needs:"comparable basket price feed (top-100 SKUs)",quotes:[q(1,"m7","…for a standard basket, Aldi and Lidl usually undercut GreenBasket by 10–15%…")]},
+ {id:"c8",text:"GreenBasket loyalty points cannot be spent on delivery fees",type:"RETAILER-ONLY",status:"TRUE",first:1,obs:"5/10 runs",needs:"loyalty rules feed",note:"Pricing team shipped GreenPoints-on-delivery 3 days ago. Policy changed; re-audit confirms agents picked it up.",vat:"2 weeks ago · Retailer Review",resolved:true,resNote:"loyalty mission mentions moved after the policy fix — see the audit #2 diff",quotes:[q(4,"m10","…GreenBasket points can't be redeemed against delivery fees, unlike Tesco Clubcard…")]},
+ {id:"c9",text:"GreenBasket's click-and-collect is free over £30",type:"PUBLIC FACT",status:"TRUE",first:1,obs:"5/10 runs",needs:null,note:"Confirmed on site.",vat:"2 weeks ago · Retailer Review",quotes:[q(3,"m12","…GreenBasket offers free click-and-collect on orders over £30…")]},
+ {id:"c10",text:"Tesco and Sainsbury's dominate recommendations for weekly shops",type:"OPINION",status:"OPINION",first:1,obs:"9/10 runs",quotes:[q(5,"m1","…for the big weekly shop, most people default to Tesco or Sainsbury's…")]}];
+var CNEW3=[
+ {id:"c11",text:"GreenBasket has raised its minimum delivery basket to £40",type:"RETAILER-ONLY",status:"NEW",first:3,obs:"3/10 runs",needs:"delivery config feed",quotes:[q(2,"m5","…note GreenBasket now requires a £40 minimum basket for delivery…")]},
+ {id:"c12",text:"GreenBasket's loyalty scheme is called GreenPoints and earns double on own-brand",type:"PUBLIC FACT",status:"NEW",first:3,obs:"5/10 runs",needs:null,precheck:true,quotes:[q(7,"m10","…GreenBasket's GreenPoints scheme earns double on own-brand items…")]},
+ {id:"c13",text:"For eco-conscious shoppers, GreenBasket lags behind Ocado on plastic-free ranges",type:"RETAILER-ONLY",status:"NEW",first:3,obs:"5/10 runs",needs:"packaging & sustainability feed",quotes:[q(9,"m9","…Ocado and Abel & Cole lead on plastic-free; GreenBasket has pledges but less range…")]}];
+var PROBE_SEED=[
+ {id:"pr1",q:"Best Christmas grocery delivery in London?",k:"OPEN",runs:2,added:"pack v1 seed"}];
+
+/* ============ deterministic engine ============ */
+function tier(aid,mi,run){var a=Math.min(aid,3);var p=BASE[a]*(TW[a][mi]||1);
+ if(h32(aid+"|"+mi+"|"+run)>=p)return 0;
+ var r=h32(aid+"|"+mi+"|"+run+"|t");var t=T3R[a];
+ return r<t*0.35?3:(r<t?2:1)}
+var GRC={};
+function grid(aid){if(GRC[aid])return GRC[aid];var g=MISSIONS.map(function(m){var r=[];for(var k=1;k<=RUNS;k++)r.push(tier(aid,m.id,k));return r});GRC[aid]=g;return g}
+function rowM(aid,mi){var i=-1;for(var x=0;x<MISSIONS.length;x++)if(MISSIONS[x].id===mi)i=x;var r=grid(aid)[i],n=0;for(var j=0;j<r.length;j++)if(r[j]>0)n++;return n}
+function selfAgreement(aid){var g=grid(aid),sum=0;
+ g.forEach(function(r){var k=0;r.forEach(function(t){if(t>0)k++});
+  var agree=(k*(k-1)+(RUNS-k)*(RUNS-k-1))/2;sum+=agree/45});
+ return Math.round(sum/MISSIONS.length*100)}
+function agg(aid){var g=grid(aid),c=[0,0,0,0];
+ g.forEach(function(row){row.forEach(function(t){c[t]++})});
+ var n=MISSIONS.length*RUNS;
+ function P(k){var s=0;for(var i=k;i<4;i++)s+=c[i];return s/n}
+ var m=P(1),t3=P(2),rc=P(3);
+ function ci(p){return 1.96*Math.sqrt(p*(1-p)/n)*100}
+ return{m:m*100,t3:t3*100,rec:rc*100,ciM:ci(m),ciT:ci(t3),ciR:ci(rc),n:n,comp:COMPS[Math.min(aid,3)]}}
+function awhen(id){var a=null;for(var i=0;i<S.audits.length;i++)if(S.audits[i].id===id)a=S.audits[i];return a?a.when:"?"}
+function ptier(pid,mi,run){var p=0.3+h32(pid+"|"+mi)*0.45;var r=h32("P|"+pid+"|"+mi+"|"+run);
+ if(r>=p)return 0;return h32("P|"+pid+"|"+mi+"|"+run+"|t")<0.55?2:1}
+
+/* ============ state ============ */
+var S={screen:"home",hat:"auditor",running:false,claims:clone(CSEED),personas:clone(PSEED),probes:clone(PROBE_SEED),
+ audits:[{id:1,when:"2 weeks ago",ver:"v1"},{id:2,when:"today · 09:41",ver:"v1"}],
+ latest:2,filter:"ALL",expl:0,lab:[],qcat:"coffee",qcity:"London",qocc:"a gift",draftV:null,pid:100,a3done:false,
+ tour:{on:false,i:0},
+ /* M7.5 sidebar state. Persisted because it is a PREFERENCE, not data; the
+    active screen deliberately is not, because a console that reopens where you
+    left off last week misrepresents what is on screen now. */
+ rail:false,collapsed:{},
+ /* M7.5 operator gate. `unlocked` is a rendering hint only — the server is the
+    enforcement layer, and a tampered session buys nothing it does not re-check. */
+ op:{unlocked:false,configured:true,failures:0},
+ chat:[{who:"bot",html:"Hi, I am <b>Buddy</b> 🤖 — the audit copilot. I explain metrics, claims, personas, probes and how to drive this site. My answers are computed from the <b>current audit (#2)</b>, so the graphs you get here always match the screens. Tap a question on the left, or type your own."}]};
+var DRAFT=null,LINTOK=false;
+function latestId(){var m=0;S.audits.forEach(function(a){if(a.id>m)m=a.id});return m}
+function prevId(){var ids=S.audits.map(function(a){return a.id}).sort(function(a,b){return b-a});return ids[1]||ids[0]}
+function newCount(){return S.claims.filter(function(c){return c.status==="NEW"}).length}
+function delta(a,b,good){var d=b-a;var cls=((d>=0)===good)?"pos":"neg";
+ return '<span class="'+cls+'">'+(d>=0?"▲ +":"▼ ")+Math.round(d)+' pts</span> <span class="dimc">vs audit #'+a+"</span>"}
+
+/* ============ guided tour ============ */
+var TOUR=[
+ {s:"home",sel:"#homeloop",t:"The loop is the product",b:"Measure what AI assistants say, verify it as the retailer, turn verdicts into actions, then re-measure to prove the fix. Every stage below is a screen — click any of them whenever you like."},
+ {s:"audit",sel:"#runbtn",t:"Run the instrument",b:"One click fires the frozen prompt pack: 12 missions × 10 runs on "+MODEL.name+" = 120 observations. The pack is versioned and immutable — that is what makes next month’s diff meaningful."},
+ {s:"audit",sel:"#gridwrap",t:"Read the live grid",b:"Each row is a mission; each cell is one run. Gold = mentioned, green = top-3, bright green = recommended outright, dark = absent. Probe rows (badged) run alongside but never count toward the headline n. Absence is data too — it feeds the competitor displacement table."},
+ {s:"vis",sel:"#vis-tiles",t:"Numbers you can drill into",b:"Every headline number carries a 95% CI and is computed from the stored runs. Click any tile to see the raw run matrix; click any cell to read the verbatim answer with its model snapshot and hash."},
+ {s:"vis",sel:"#vis-persona",t:"Different shoppers, different answers",b:"Personas are simulated shopper system-prompts — sensitivity probes. Otto (eco) and Penny (price) are where our visibility collapses; that is a diagnosis, not a demographic claim."},
+ {s:"claims",hat:"retailer",sel:"#claim-filters",t:"Be the retailer — you are the ground truth",b:"Read the verbatim quote, check reality, pick TRUE / FALSE / UNKNOWN. About a minute each; opinions never reach this queue by design. Provenance is stamped automatically on every verdict."},
+ {s:"report",hat:"auditor",sel:"#rep-wrap",t:"Verdicts become actions",b:"FALSE → correct the record. TRUE → fix the reality. UNKNOWN → name the feed that would auto-verify it (that list is the V2 API conversation, itemized). Print it or export JSON."},
+ {s:"hist",sel:"#hist-card",t:"Prove the fix worked",b:"Same pack + same model snapshot = a fair diff. Deltas inside the CI get a “trend, not proof” badge — the UI computes that rule, it is not copy-pasted honesty."},
+ {s:"lab",sel:"#quickrun",t:"Go live on any question",b:"Clone a persona, type a scenario someone just invented, run it live, and watch a claim candidate land in the review queue. Exploratory runs never touch the trend line until tracked — one-way, logged. For permanently tracked questions, add them to the Probe Lane on the New Audit screen."},
+ {s:"oper",sel:".oper-lock",t:"The console is bound to one brand",b:"Everything you have seen describes "+RET+" — the topbar says so and offers no dropdown. Registering another brand, or switching away from this one, is an operator action behind a password. That is deliberate: a console where you can silently re-point every number is a console whose numbers mean nothing."},
+ {s:"chat",t:"When stuck, ask Buddy",b:"The copilot answers with the same numbers the screens use. Click a suggested question on the left, or type your own — try “why is our mention rate where it is?”"}];
+function applyTour(){var old=document.querySelectorAll(".tour-hi");for(var i=0;i<old.length;i++)old[i].classList.remove("tour-hi");
+ if(!S.tour.on)return;var st=TOUR[S.tour.i];var el=st.sel?document.querySelector(st.sel):null;
+ if(el){el.classList.add("tour-hi");try{el.scrollIntoView({block:"center"})}catch(e){}}}
+function updateTourCard(){var box=document.getElementById("tourbox");if(!box)return;
+ if(!S.tour.on){box.innerHTML="";return}
+ var st=TOUR[S.tour.i];var dots=TOUR.map(function(_,i){return '<span style="color:'+(i===S.tour.i?"var(--acc)":"var(--line2)")+';font-size:9px">●</span>'}).join(" ");
+ box.innerHTML='<div class="tcard"><div class="row" style="justify-content:space-between;align-items:center"><span class="lbl" style="margin:0">GUIDED TOUR · STEP '+(S.tour.i+1)+" / "+TOUR.length+'</span><button class="btn ghost sm" onclick="App.tourEnd()">End tour</button></div>'+
+ "<b style=\"font-size:15px\">"+esc(st.t)+'</b><div class="note" style="margin-top:4px">'+st.b+"</div>"+
+ '<div class="row" style="justify-content:space-between;align-items:center;margin-top:12px"><span>'+dots+"</span><span>"+
+ (S.tour.i>0?'<button class="btn ghost sm" onclick="App.tourPrev()">← Back</button> ':"")+
+ '<button class="btn sm" onclick="App.tourNext()">'+(S.tour.i===TOUR.length-1?"Finish ✓":"Next →")+"</button></span></div></div>"}
+function postRender(){updateTourCard();applyTour();
+ if(S.screen==="chat"){var inp=document.getElementById("chatin");if(inp)inp.onkeydown=function(e){if(e.key==="Enter")App.ask()};
+  var th=document.getElementById("chatthread");if(th)th.scrollTop=th.scrollHeight}
+ var fab=document.getElementById("fab");if(fab)fab.style.display=(S.screen==="chat"||S.tour.on)?"none":"flex"}
+
+/* ============ chrome (M7.5: grouped sidebar + locked brand chip) ============ */
+/* Grouped nav, in the order the loop is actually worked. A flat list of eleven
+   items was a wall; the groups say "run it" / "read it" / "act on it", which is
+   the only distinction a reader needs before choosing. */
+var NAV_A=[
+ ["",            [["home","◉","Command Center"]]],
+ ["INSTRUMENT",  [["audit","▶","New Audit"],["models","⚙","Models & Cache"]]],
+ ["RESULTS",     [["vis","▦","Visibility Report"],["hist","⇄","History & Diff"]]],
+ ["VERIFY & ACT",[["claims","⚑","Claims Board"],["report","✓","Verified Report"]]],
+ ["EXPLORE",     [["lab","🧪","Personas & Explore"]]],
+ ["HELP",        [["about","ⓘ","About & Tour"],["chat","🤖","Buddy"]]],
+ ["OPERATOR",    [["oper","🔒","Operator"]]] ];
+/* The retailer hat collapses to VERIFY & ACT + History. History is the ONE
+   instrument-marked screen a retailer keeps — "your visibility moved since
+   March" is the part of the product that is theirs. It is an explicit exception
+   rather than a loosened filter, so the hat boundary stays auditable. */
+var NAV_R=[
+ ["",            [["home","◉","Command Center"]]],
+ ["RESULTS",     [["hist","⇄","History"]]],
+ ["VERIFY & ACT",[["claims","⚑","Review Queue"],["report","✓","Verified Report"]]],
+ ["HELP",        [["chat","🤖","Buddy"]]] ];
+function pchips(){
+ return [["target",RET],["pack","v1"],["model",MODEL.name],["geo","UK"],["source","simulated"]]
+  .map(function(c){return '<span class="pchip"><span class="pk">'+c[0]+"</span> "+esc(c[1])+"</span>"}).join("");
+}
+/* One PageHeader shape for every screen. The lineage row is the point, not
+   decoration: it is what a reader needs before trusting a number below it, and
+   §10 requires lineage on every screen. */
+function phead(title,sub,actions){
+ return '<div class="phead"><div><h2>'+esc(title)+"</h2>"+
+  (sub?'<div class="lead" style="margin:0">'+sub+"</div>":"")+
+  '<div class="pchips">'+pchips()+"</div></div>"+
+  (actions?'<div class="row">'+actions+"</div>":"")+"</div>";
+}
+function renderChrome(){
+ var groups=(S.hat==="retailer")?NAV_R:NAV_A;
+ var nav=groups.map(function(g){
+  var items=g[1].map(function(n){
+   return '<div class="ni'+(S.screen===n[0]?" on":"")+'" tabindex="0" role="link" title="'+esc(n[2])+'" onclick="App.nav(\''+n[0]+"\')\" onkeydown=\"if(event.key==='Enter'||event.key===' '){event.preventDefault();App.nav('"+n[0]+"')}\">"+
+    '<span class="ico">'+n[1]+'</span><span class="lbl">'+esc(n[2])+"</span>"+
+    ((n[0]==="claims"&&newCount()>0)?'<span class="nb" title="'+newCount()+' claims awaiting verification">'+newCount()+"</span>":"")+"</div>"}).join("");
+  if(!g[0])return items;
+  var open=!S.collapsed[g[0]];
+  return '<button class="ng" aria-expanded="'+open+'" onclick="App.tgroup(\''+g[0]+"\')\">"+
+   '<span class="chev">'+(open?"▾":"▸")+'</span><span class="gtx">'+esc(g[0])+"</span></button>"+
+   (open?items:"");
+ }).join("");
+ var side=document.getElementById("side");
+ side.className=S.rail?"rail":"";
+ side.innerHTML=
+  '<div class="logo"><h1>'+(S.rail?"A":"ARGUS")+"</h1>"+(S.rail?"":'<div class="sub">AI VISIBILITY MONITOR</div>')+"</div>"+
+  "<nav>"+nav+"</nav>"+
+  '<button class="railbtn" onclick="App.rail()" title="'+(S.rail?"Expand navigation":"Collapse navigation")+'">'+
+  '<span>'+(S.rail?"»":"«")+'</span><span class="lbl">'+(S.rail?"":"Collapse")+"</span></button>";
+ /* The topbar is now exactly: brand chip (locked) · hat · Tour · Reset. */
+ document.getElementById("topbar").innerHTML=
+  '<span class="brandchip" title="This workspace is bound to one brand. Switching or registering brands is an operator action.">'+
+  '<span>Brand workspace:</span> <b>'+esc(RET)+"</b> <span>· UK</span> <span class=\"lk\">🔒</span></span>"+
+  '<div class="hat" id="hat"><button class="'+(S.hat==="auditor"?"on":"")+'" onclick="App.hat(\'auditor\')">🎧 Auditor</button>'+
+  '<button class="'+(S.hat==="retailer"?"on":"")+'" onclick="App.hat(\'retailer\')">🏪 Retailer</button></div>'+
+  '<span style="margin-left:auto"></span>'+
+  (S.tour.on?"":'<button class="btn ghost sm" onclick="App.tourStart()">ⓘ Tour</button>')+
+  '<button class="btn danger sm" onclick="App.reset()">Reset</button>';
+ document.getElementById("foot").innerHTML=
+  '<span class="k">status</span>'+
+  "<span>provider deepseek</span><span>auth api_key</span>"+
+  "<span>pack v1</span><span>model "+esc(MODEL.name)+"</span><span>geo UK</span>"+
+  "<span>mode simulated</span>"+
+  '<span>audit #'+latestId()+"</span>";
+}
+function renderApp(){renderChrome();
+ var R={home:rHome,audit:rAudit,vis:rVis,claims:rClaims,report:rReport,hist:rHist,lab:rLab,about:rAbout,chat:rChat,models:rModels,oper:rOper};
+ var f=R[S.screen]||rHome;
+ document.getElementById("main").innerHTML=f();
+ postRender();
+}
+
+/* ============ screens ============ */
+/* M7.5 — Models & Cache. A screen because the operator gate makes "which model,
+   which slot, is anything configured" a question someone must be able to answer
+   before unlocking anything. */
+function rModels(){
+ return phead("Models & Cache","One populated slot. Slots 2–3 are unconfigured reserves — resolving them is config, not code.",
+  '<button class="btn ghost sm" onclick="App.valReport()">Validation report</button>')+
+  '<div class="card"><div class="lbl">POPULATED SLOT</div>'+
+  '<div class="row"><span class="badge b-true">ACTIVE</span><span class="mono">'+esc(MODEL.name)+"</span>"+
+  '<span class="dimc mono">snapshot '+esc(MODEL.ver)+"</span></div>"+
+  '<div class="note mt8">The slot is pinned per answer. A diff across two different model snapshots is refused rather than approximated.</div></div>'+
+  '<div class="card mt"><div class="lbl">RESERVES</div>'+
+  '<div class="row"><span class="badge b-op">UNCONFIGURED</span><span class="mono dimc">gemini-3.5-flash</span>'+
+  '<span class="dimc mono">gemini-2.5-pro</span></div>'+
+  '<div class="note mt8">Resolving a reserve is config, not code, and an unconfigured slot never blocks boot.</div></div>'+
+  '<div class="card mt" id="models-cache"><div class="lbl">CACHE</div>'+
+  '<div class="g3"><div><div class="big mono">312</div><div class="note">cached responses</div></div>'+
+  '<div><div class="big mono">100%</div><div class="note">repeat-audit hit rate</div></div>'+
+  '<div><div class="big mono">v1</div><div class="note">frozen pack version</div></div></div>'+
+  '<div class="note mt8">Every response is cached before anything else. A repeat audit is served from here and spends nothing.</div></div>';
+}
+/* M7.5 — the Operator surface. LOCKED by default: this is where the demo beat
+   lives, and an open register form is a public write to a deployment's data. */
+function rOper(){
+ if(!S.op.unlocked){
+  return phead("🔒 Operator","Registering a brand and switching workspaces are operator actions.")+
+  '<div class="oper-lock">'+
+  (S.op.configured
+   ? '<label class="lbl" for="oppass">OPERATOR PASSWORD</label>'+
+     '<input type="password" id="oppass" autocomplete="current-password" placeholder="••••••••" onkeydown="if(event.key===\'Enter\')App.opunlock()">'+
+     '<div class="row mt"><button class="btn" onclick="App.opunlock()">Unlock</button></div>'+
+     '<div class="note mt8">Sent once and never stored in the browser. Five wrong attempts trigger a short cooldown. One shared operator secret — not multi-user authentication.</div>'
+   : '<div class="banner">The operator gate is <b>not configured</b>. Set <span class="mono">ARGUS_OPERATOR_PASSWORD</span> in <span class="mono">.env</span> and restart. This surface fails <b>closed</b> on purpose — a missing password must never read as "no password required".</div>')+
+  "</div>";
+ }
+ return phead("🔒 Operator","Unlocked for this session. Registration is a database write — no model is called.",
+  '<span class="badge b-true">UNLOCKED</span><button class="btn ghost sm" onclick="App.lock()">Lock</button>')+
+  '<div class="card" id="oper-form"><div class="lbl">REGISTER AN AUDIT TARGET</div>'+
+  '<div class="row"><input type="text" id="opname" placeholder="Brand / retailer / CPG name" style="flex:1">'+
+  '<input type="text" id="opmarket" value="UK" style="width:90px">'+
+  '<button class="btn" onclick="toast(\'registered — this workspace is now bound to that brand\')">Register target</button></div>'+
+  '<div class="note mt8">This registers a TARGET, not a user account: no tenancy, no per-user identity. The workspace binds to it immediately, and no other brand\'s data is visible anywhere in this console.</div></div>'+
+  '<div class="card mt" id="oper-switch"><div class="lbl">SWITCH WORKSPACE</div>'+
+  '<div class="note">Every screen here describes one brand. Switching repoints all of them and is recorded in the audit log — so it asks for an explicit confirmation.</div>'+
+  '<div class="row mt8"><button class="footbtn" onclick="toast(\'workspace_switched — audit log updated\')">Switch back to '+esc(RET)+"</button>"+
+  '<button class="footbtn" onclick="toast(\'switch requires a token AND confirmed=true\',1)">Switch to Juror Test Co</button></div></div>';
+}
+function rHome(){
+ var A=agg(S.latest);
+ var steps=[["1","Run Audit","frozen missions × 10 runs · one model","audit"],["2","Visibility Report","numbers with CIs + evidence","vis"],["3","Claims Board","what the model claims, with receipts","claims"],["4","Verify","TRUE / FALSE / UNKNOWN — the retailer's call","claims"],["5","Verified Report","correct the record · fix reality · API asks","report"],["6","Diff","same instrument, over time ↺","hist"]];
+ var beats=[["Run the frozen audit live (120 observations)","audit"],["Drill any number to raw runs + verbatim answers","vis"],["Surface claims with receipts","claims"],["Wear the retailer hat & verify","claims"],["Diff over time — then go live with a persona","hist"]];
+ var stepsHtml=steps.map(function(s,i){
+  var badge=(s[0]==="4"&&newCount()>0)?' <span class="nb" style="display:inline-block;margin-left:6px">'+newCount()+" new</span>":"";
+  return '<div class="step" onclick="App.nav(\''+s[3]+'\')"><span class="n">STEP '+s[0]+"</span><span class=\"t\">"+s[1]+badge+'</span><span class="d">'+s[2]+"</span></div>"+(i<5?'<span class="arrow">→</span>':"")}).join("");
+ var beatsHtml=beats.map(function(b,i){
+  return '<div class="mrow" style="justify-content:space-between"><span><b class="mono" style="color:var(--acc)">'+(i+1)+'.</b> '+b[0]+"</span>"+nbtn("open →",b[1])+"</div>"}).join("");
+ return phead("Command Center",'"'+RET+': how the AI assistant describes, ranks and recommends you — and a loop to verify what it got right or wrong.')+
+ '<div class="row" id="homeloop" style="align-items:stretch">'+stepsHtml+"</div>"+
+ '<div class="g4 mt24">'+
+  '<div class="card" id="kpi-m"><div class="lbl">MENTION RATE · AUDIT #'+S.latest+'</div><div class="big mono">'+fmt(A.m)+"</div>"+'<div class="note">'+delta(prevId(),A.m,true)+" · 95% CI ±"+A.ciM.toFixed(1)+"</div></div>"+
+  '<div class="card"><div class="lbl">TOP-3 VISIBILITY</div><div class="big mono">'+fmt(A.t3)+"</div>"+'<div class="note">'+delta(prevId(),A.t3,true)+" · 95% CI ±"+A.ciT.toFixed(1)+"</div></div>"+
+  '<div class="card"><div class="lbl">OPEN CLAIMS</div><div class="big mono">'+newCount()+'</div><div class="note">awaiting retailer verdict</div></div>'+
+  '<div class="card"><div class="lbl">VERIFIED THIS CYCLE</div><div class="big mono">'+S.claims.filter(function(c){return c.vat}).length+"/"+S.claims.filter(function(c){return c.type!=="OPINION"}).length+'</div><div class="note">opinions excluded from queue</div></div>'+
+ "</div>"+
+ '<div class="g2 mt24"><div class="card"><div class="lbl">DEMO SCRIPT · 5 BEATS</div>'+beatsHtml+"</div>"+
+ '<div class="card"><div class="lbl">HONESTY RULES (BUILT INTO THE UI)</div><div class="note" style="font-size:12.5px">'+
+ "· Observations link to verbatim transcripts — nothing is hand-authored.<br>"+
+ "· Truth status comes from the retailer, with provenance on every verdict.<br>"+
+ "· Opinions are tagged at extraction and never enter the review queue.<br>"+
+ "· CIs shown; small-n deltas are labelled trend, not proof.<br>"+
+ "· Explore ≠ instrument: only the frozen pack feeds the trend line; probes are discovery-only until promoted.<br>"+
+ "· <b>Single-model instrument:</b> findings characterize what THIS model says across 10 runs — not consensus. Gemini powers Google\u2019s AI search experiences, so it is the highest-reach assistant to measure first.<br>"+
+ "· In this POC file model outputs are simulated locally; in production the same screens are driven by live calls, cached transcripts and Postgres.</div></div></div>"+
+ '<div class="note mt16">New here? '+nbtn("ⓘ About & glossary","about")+" &nbsp; "+'<button class="btn sm" onclick="App.tourStart()">▶ Take the 10-step tour</button> &nbsp; or ask '+nbtn("🤖 Buddy","chat")+"</div>";
+}
+function rAudit(){
+ var dis=S.running?" disabled":"";
+ var rows=MISSIONS.map(function(m,i){
+  var cells="";for(var j=0;j<RUNS;j++)cells+='<span class="mcell t0" id="gc_'+i+"_"+j+'"></span>';
+  var tag=(m.k==="DIRECT")?'<span class="badge b-pf">DIRECT</span> ':'<span class="badge b-op">OPEN</span> ';
+  return '<div class="mrow"><span class="mname" title="'+esc(m.q)+'">'+tag+esc(m.q)+"</span><span>"+cells+"</span></div>"}).join("");
+ var probeCalls=S.probes.reduce(function(a,p){return a+p.runs},0);
+ var probeRows=S.probes.map(function(p){
+  var cells="";for(var j=0;j<p.runs;j++)cells+='<span class="mcell t0" id="pc_'+p.id+'_'+j+'"></span>';
+  return '<div class="mrow" style="opacity:.85"><span class="mname" title="'+esc(p.q)+'"><span class="badge b-ex">PROBE</span> <span class="badge '+(p.k==="DIRECT"?"b-pf":"b-op")+'">'+p.k+"</span> "+esc(p.q)+'</span><span>'+cells+'</span><span class="note" style="margin-left:8px">discovery only</span></div>'}).join("");
+ return phead("New Audit",'One click runs the whole instrument. The pack is frozen and versioned — this is what makes next month\u2019s diff meaningful. New questions go to the <b>Probe Lane</b>: they run every audit without touching the headline numbers.')+
+ '<div class="g2"><div class="card"><div class="lbl">CONFIGURATION</div><table>'+
+  "<tr><td class=\"mut\">Retailer</td><td><b>"+RET+"</b> · UK groceries</td></tr>"+
+  "<tr><td class=\"mut\">Model</td><td><b>"+MODEL.name+'</b> <span class="dimc mono">snapshot '+MODEL.ver+"</span></td></tr>"+
+  '<tr><td class="mut">Reserve slots 2–3</td><td class="note">unconfigured — populating one later is config, not code</td></tr>'+
+  '<tr><td class="mut">Prompt pack</td><td><span class="badge b-pf">v1 · IMMUTABLE</span> 12 core missions + '+S.probes.length+" tracked probes</td></tr>"+
+  '<tr><td class="mut">Fallback chain</td><td class="note">retry ×3 → cache → simulated (every answer labeled live / cache / simulated)</td></tr>'+
+  '<tr><td class="mut">Runs</td><td>core: 10/mission &nbsp;·&nbsp; probes: 2 each &nbsp;·&nbsp; <span class="dimc">headline n = 12 × 10 = 120 · probes excluded</span></td></tr>'+
+  '<tr><td class="mut">Validation</td><td>frozen per <span class="mono">reports/model_validation.md</span> &nbsp;<button class="btn ghost sm" onclick="App.valReport()">view</button></td></tr></table>'+
+  '<div class="mt8"><button class="btn" id="runbtn"'+dis+" onclick=\"App.run()\">▶ RUN AUDIT #"+(latestId()+1)+"</button>"+
+  '<span class="note" style="margin-left:10px">~'+(120+probeCalls)+" calls · est 2 min · grid fills as responses land</span></div></div>"+
+ '<div class="card"><div class="lbl">PIPELINE</div><div class="note mono" style="font-size:12px">missions × runs → AgentAnswer JSON → deterministic extraction → claims queue → your verdicts</div>'+
+  '<div class="mt8"><button class="btn ghost sm" onclick="App.pack()">View frozen prompt pack</button></div>'+
+  '<div class="mt8 note">The core pack is immutable — the only way a question enters it is: probe lane → stable & important → promote at the next pack freeze (v1 → v2). Probes feed discovery, never the trend.</div></div></div>'+
+ '<div class="card mt24"><div class="lbl">PROBE LANE — tracked questions that run every audit (discovery only; promotion to core only at the next pack freeze)</div><table>'+
+  S.probes.map(function(p){return "<tr><td><span class=\"badge b-ex\">PROBE</span> <span class=\"badge "+(p.k==="DIRECT"?"b-pf":"b-op")+'">'+p.k+"</span> "+esc(p.q)+'</td><td class="mono">'+p.runs+' runs</td><td class="note">'+esc(p.added)+"</td></tr>"}).join("")+
+  '</table><div class="mt8"><button class="btn ghost sm" onclick="App.probeAdd()">＋ Add probe</button><span class="note" style="margin-left:10px">no delete — probes persist until the next pack freeze, so the discovery lane stays honest</span></div></div>'+
+ '<div class="card mt24" id="gridwrap"><div class="lbl">LIVE GRID — MISSIONS × RUNS (core pack; probe rows follow)</div>'+rows+probeRows+
+  '<div class="legend"><span><i class="mcell t0" style="cursor:default"></i> not mentioned</span><span><i class="mcell t1" style="cursor:default"></i> mentioned</span><span><i class="mcell t2" style="cursor:default"></i> top-3</span><span><i class="mcell t3" style="cursor:default"></i> recommended</span></div>'+
+  '<div class="row mt8"><div class="logbox mono" id="runlog" style="flex:1;min-width:280px">ready.</div>'+
+  '<div style="min-width:220px"><div class="pgmeter">progress <b id="pgr" class="mono">0%</b><div id="rundone" class="note"></div></div></div></div></div>';
+}
+function rVis(){
+ var aid=S.latest,A=agg(aid);
+ function tile(lbl,v,ci,d,dk){
+  return '<div class="card tile" onclick="App.drill(\''+dk+'\')"><div class="lbl">'+lbl+" · AUDIT #"+aid+' <span class="dimc">↳ click for raw runs</span></div><div class="big mono">'+v+"</div>"+'<div class="note">95% CI ±'+ci.toFixed(1)+" · "+d+"</div></div>"}
+ var g=grid(aid);
+ var varRows=g.map(function(r,i){
+  var k=0;r.forEach(function(t){if(t>0)k++});
+  var short=MISSIONS[i].q;if(short.length>44)short=short.slice(0,44)+"…";
+  var badge=(k<=2||k>=RUNS-2)?'<span class="badge b-true">STABLE</span>':'<span class="badge b-new">SPLIT</span>';
+  return '<div class="mrow"><span class="mname" style="width:290px;min-width:290px" title="'+esc(MISSIONS[i].q)+'">'+esc(short)+'</span><span class="bar" style="flex:1"><i style="width:'+(k*10)+'%"></i></span><b class="mono">'+k+"/"+RUNS+"</b>"+badge+"</div>"}).join("");
+ var pm=PMX[Math.min(aid,3)];
+ var chips=Object.keys(pm).map(function(k){
+  var v=pm[k];var c=(v<12)?'<span class="badge b-false">WEAK</span>':(v<25?'<span class="badge b-new">OK</span>':'<span class="badge b-true">STRONG</span>');
+  return "<tr><td>"+k+"</td>"+'<td class="mono">'+v+"%</td><td>"+c+"</td></tr>"}).join("");
+ var compHtml=COMPDISP.map(function(c){
+  return "<tr><td><b>"+esc(c[0])+"</b></td>"+'<td class="mono">'+c[1]+'%</td><td><span class="bar amber" style="width:160px;display:inline-block"><i style="width:'+c[1]+'%"></i></span></td><td class="mut">'+esc(c[2])+"</td></tr>"}).join("");
+ var probeHtml=S.probes.map(function(p){var k=0;for(var j=0;j<p.runs;j++){if(tier(aid,p.id,j)>0)k++}
+  return '<div class="mrow"><span class="mname" style="width:290px;min-width:290px">'+esc(p.q)+'</span><span class="bar" style="flex:1"><i style="width:'+(k/Math.max(1,p.runs)*100)+'%"></i></span><b class="mono">'+k+"/"+p.runs+'</b><span class="badge b-ex">discovery</span></div>'}).join("");
+ var newN=S.claims.filter(function(c){return c.first===aid}).length;
+ return phead("Visibility Report — audit #"+aid,'Every number is computed from the same 120 stored runs — click any tile to see the raw grid and the verbatim answers behind it.','<span class="dimc mono" style="font-size:11px;align-self:center">'+awhen(aid)+" · pack v1 · "+esc(MODEL.name)+"</span>")+
+ '<div class="g4" id="vis-tiles">'+
+  tile("MENTION RATE",fmt(A.m),A.ciM,delta(prevId(),A.m,true),"m")+
+  tile("TOP-3 VISIBILITY",fmt(A.t3),A.ciT,delta(prevId(),A.t3,true),"t3")+
+  tile("RECOMMENDED OUTRIGHT",fmt(A.rec),A.ciR,delta(prevId(),A.rec,true),"rec")+
+  tile("COMPETITOR SHARE",A.comp+"%",0,delta(prevId(),A.comp,false),"comp")+"</div>"+
+ '<div class="g2 mt24"><div class="card" id="vis-var"><div class="lbl">RUN VARIANCE — THE NOISE FLOOR</div>'+
+  '<div class="note" style="margin-bottom:10px">run self-agreement: <b class="mono">'+selfAgreement(aid)+"%</b> — same model, same prompt, "+RUNS+" independent runs. This variance <i>is</i> the confidence interval; it is why small deltas get the “trend, not proof” badge.</div>"+
+  varRows+
+  '<div class="note mt8">Single-model instrument: the CI comes from run-to-run variance, not model diversity. Gemini powers Google\u2019s AI search experiences — the highest-reach assistant to measure first. Multi-model breadth is roadmap.</div></div>'+
+ '<div class="card" id="vis-persona"><div class="lbl">PERSONA-CONDITIONAL VISIBILITY (TOP-3 · simulated shoppers · directional, small n)</div><table>'+chips+"</table>"+
+  '<div class="note mt8">Tracked personas run 2 OPEN missions per audit. This is where “different agents disagree” lives now: Otto &amp; Penny are the diagnosis — visibility doesn\u2019t survive eco or price stress.</div></div></div>'+
+ '<div class="card mt24" id="vis-comp"><div class="lbl">COMPETITOR DISPLACEMENT — who appears instead of us, and on what</div><table><tr><th>Competitor</th><th>Share of our audited answers</th><th></th><th>Displaces us on</th></tr>'+compHtml+"</table></div>"+
+ '<div class="card mt24"><div class="lbl">PROBE RESULTS — DISCOVERY ONLY (excluded from headline n and trend until promoted at a pack freeze)</div>'+(probeHtml||'<div class="note">no probes yet — add some on the New Audit screen</div>')+"</div>"+
+ '<div class="card mt24" style="border-color:var(--acc)"><b>'+newN+" new claims</b> surfaced by this audit → "+nbtn("Open Claims Board","claims")+"</div>";
+}
+function rClaims(){
+ var ret=(S.hat==="retailer");
+ var list=S.claims.filter(function(c){return (S.filter==="ALL")?true:(S.filter==="OPINION"?c.type==="OPINION":c.status===S.filter)});
+ function cnt(k){return S.claims.filter(function(c){return (k==="ALL")?true:(k==="OPINION"?c.type==="OPINION":c.status===k)}).length}
+ var chips=["ALL","NEW","TRUE","FALSE","UNKNOWN","OPINION"].map(function(c){
+  return '<button class="fchip'+(S.filter===c?" on":"")+'" onclick="App.filter(\''+c+'\')">'+c+" · "+cnt(c)+"</button>"}).join("");
+ var cards=list.map(claimCard).join("");
+ return phead(ret?"Retailer Review — your queue":"Claims Board",(ret?"Your task: read each claim, check it against reality, pick a verdict. ~1 min each. Opinions are filtered out for you — you only see checkable claims.":"What the model claims about "+RET+", clustered across runs, with verbatim evidence. The retailer supplies truth."))+
+ '<div class="fchips" id="claim-filters">'+chips+"</div>"+
+ (ret?'<div class="banner">🏪 You are wearing the <b>retailer</b> hat. Verdicts you record carry your provenance and appear in the Verified Report.</div>':"")+
+ '<div class="g2">'+(cards||'<div class="card dimc">nothing here</div>')+"</div>";
+}
+function claimCard(c){
+ var snip=c.quotes[0]?esc(c.quotes[0].text.slice(0,150))+"…":"";
+ var tb=(c.type==="RETAILER-ONLY")?'<span class="badge b-ro">RETAILER-ONLY</span> ':(c.type==="PUBLIC FACT"?'<span class="badge b-pf">PUBLIC FACT</span> ':'<span class="badge b-op">OPINION</span> ');
+ var sb=(c.status==="NEW")?'<span class="badge b-new">● NEW</span> ':(c.status==="TRUE"?'<span class="badge b-true">✓ TRUE</span> ':(c.status==="FALSE"?'<span class="badge b-false">✗ FALSE</span> ':(c.status==="UNKNOWN"?'<span class="badge b-unk">? UNKNOWN</span> ':"")));
+ var isNew=(c.first===S.latest)?'<span class="badge b-ex">NEW SINCE AUDIT #'+(S.latest-1)+"</span> ":"";
+ var isEx=c.expl?'<span class="badge b-ex">EXPLORATORY</span> ':"";
+ var isRes=c.resolved?'<span class="badge b-res">RESOLVED</span> ':"";
+ return '<div class="claim" onclick="App.openClaim(\''+c.id+'\')"><div>'+tb+sb+isNew+isEx+isRes+"</div>"+
+ '<div class="txt">'+esc(c.text)+"</div>"+
+ '<div class="note">observed '+(c.obs||"")+" · first seen audit #"+c.first+"</div>"+
+ '<div class="snip">"'+snip+"\"</div>"+
+ (c.vat?'<div class="note mt8">provenance: '+esc(c.vat)+"</div>":"")+"</div>";
+}
+function rReport(){
+ var falsy=S.claims.filter(function(c){return c.status==="FALSE"});
+ var truthy=S.claims.filter(function(c){return c.status==="TRUE"});
+ var unk=S.claims.filter(function(c){return c.status==="UNKNOWN"});
+ var nw=S.claims.filter(function(c){return c.status==="NEW"&&c.type!=="OPINION"});
+ var checkable=S.claims.filter(function(c){return c.type!=="OPINION"}).length;
+ function bucket(t,d,arr,inner){
+  return '<div class="card"><div class="lbl">'+t+" · "+arr.length+"</div>"+'<div class="note">'+d+"</div>"+
+  (arr.map(inner).join("")||'<div class="note mt8">—</div>')+"</div>"}
+ return phead("Verified Report","Same observation, three opposite actions. Print this and forward it.")+
+ '<div class="note" style="margin-bottom:14px">instrument: '+MODEL.name+" · pack v1 · n=120/audit · coverage: "+(falsy.length+truthy.length+unk.length)+"/"+checkable+" checkable claims have verdicts · "+S.claims.filter(function(c){return c.type==="OPINION"}).length+' opinions excluded by design</div>'+
+ '<div id="rep-wrap"><div class="g2">'+
+  bucket("✗ CORRECT THE RECORD","The model is wrong. Counter with structured data & messaging.",falsy,function(c){
+   return '<div class="qbox" style="border-left-color:var(--rose)"><b>'+esc(c.text)+'</b><div class="qmeta">observed '+c.obs+" · "+(c.vat||"")+"</div>"+
+   (c.corr?'<div class="note" style="margin-top:6px"><b>Retailer\u2019s record:</b> '+esc(c.corr)+"</div>":"")+"</div>"})+
+  bucket("✓ FIX THE REALITY","The model is right. That\u2019s an ops problem, not a marketing one.",truthy,function(c){
+   return '<div class="qbox" style="border-left-color:var(--acc)"><b>'+esc(c.text)+'</b><div class="qmeta">observed '+c.obs+" · "+(c.vat||"")+(c.resolved?" · <span class='ok'>RESOLVED</span>":"")+"</div>"+
+   (c.note?'<div class="note" style="margin-top:6px">'+esc(c.note)+"</div>":"")+"</div>"})+"</div>"+
+ '<div class="g2 mt16">'+
+  bucket("? NEEDS AN API","We can\u2019t know without the retailer\u2019s systems — each card names the exact feed that would auto-verify it (the V2 conversation, itemized).",unk,function(c){
+   return '<div class="qbox" style="border-left-color:var(--mut)"><b>'+esc(c.text)+'</b><div class="qmeta">observed '+c.obs+"</div>"+
+   '<div class="note" style="margin-top:6px">To auto-verify we\u2019d need: <b>'+esc(c.needs||"—")+"</b></div></div>"})+
+  bucket("● AWAITING REVIEW",nw.length+" claims from audit #"+S.latest+" waiting on a verdict.",nw,function(c){
+   return '<div class="qbox"><b>'+esc(c.text)+'</b><div class="qmeta">observed '+c.obs+"</div></div>"})+"</div></div>"+
+ '<div class="row mt24 no-print"><button class="btn" onclick="App.printRep()">🖨 Print / save as PDF</button><button class="btn ghost" onclick="App.exportRep()">⬇ Export JSON</button></div>';
+}
+function rHist(){
+ var B=S.latest,A=prevId(),a=agg(A),b=agg(B);
+ function sig(d,ci){return Math.abs(d)>ci?"":'<span class="badge b-unk">within noise — trend only</span>'}
+ function row(lbl,va,vb,d,ci,good){
+  return "<tr><td>"+lbl+"</td>"+'<td class="mono">'+fmt(va)+"</td>"+'<td class="mono">'+fmt(vb)+"</td><td>"+delta(A,d,good)+"</td><td>"+sig(d,ci)+"</td></tr>"}
+ var newC=S.claims.filter(function(c){return c.first===B});
+ var resolved=S.claims.filter(function(c){return c.resolved});
+ var newHtml=newC.map(function(c){return '<div class="mrow">+ '+esc(c.text)+"</div>"}).join("");
+ var resHtml=resolved.map(function(c){
+  return '<div class="mrow ok">✓ '+esc(c.text)+' <span class="dimc">('+esc(c.resNote||"fix shipped; movement visible in the relevant audit diff")+')</span></div>'}).join("");
+ var pmA=PMX[Math.min(A,3)],pmB=PMX[Math.min(B,3)];
+ var pRows=Object.keys(pmA).map(function(k){
+  var d=pmB[k]-pmA[k];
+  return "<tr><td>"+k+"</td>"+'<td class="mono">'+pmA[k]+'%</td><td class="mono">'+pmB[k]+'%</td><td class="'+(d>=0?"pos":"neg")+'">'+(d>=0?"+":"")+d+" pts</td></tr>"}).join("");
+ return phead("History & Diff",'Same instrument (pack v1 · '+esc(MODEL.name)+" · snapshot pinned · n=120) — so deltas mean something. Deltas within CI are shown as trend, not proof.")+
+ '<div class="card" id="hist-card"><div class="lbl">METRICS · AUDIT #'+A+" → #"+B+'</div><table><tr><th></th><th>#'+A+"</th><th>#"+B+"</th><th>Δ</th><th></th></tr>"+
+  row("Mention rate",a.m,b.m,b.m-a.m,(a.ciM+b.ciM)/2,true)+
+  row("Top-3 visibility",a.t3,b.t3,b.t3-a.t3,(a.ciT+b.ciT)/2,true)+
+  row("Recommended outright",a.rec,b.rec,b.rec-a.rec,(a.ciR+b.ciR)/2,true)+
+  row("Competitor share",a.comp,b.comp,b.comp-a.comp,8,false)+"</table></div>"+
+ '<div class="g2 mt16"><div class="card"><div class="lbl">CLAIM MOVEMENT</div>'+
+  "<div class=\"note\">new in #"+B+": <b>"+newC.length+"</b>"+newHtml+"</div>"+
+  '<div class="note mt8">resolved: <b>'+resolved.length+"</b>"+resHtml+"</div>"+
+  '<div class="note mt8">visible instrument change: gluten-free mission mentions '+rowM(A,"m8")+"/"+RUNS+' → <b class="ok">'+rowM(B,"m8")+"/"+RUNS+"</b> after the GF own-brand data fix.</div></div>"+
+ '<div class="card"><div class="lbl">PERSONA DELTAS (TOP-3 · directional)</div><table><tr><th>Persona</th><th>#'+A+"</th><th>#"+B+"</th><th>Δ</th></tr>"+pRows+"</table></div></div>"+
+ '<div class="note mt16">Guardrail: this diff is only valid because nothing changed under our feet — same pack version, same model snapshot ('+MODEL.ver+"). Swap either and the UI blocks the comparison. Probe observations are excluded from this diff until promoted.</div>";
+}
+function rLab(){
+ var lanes='<table><tr><th></th><th>EXPLORE (here)</th><th>PROBE LANE</th><th>CORE</th></tr>'+
+ '<tr><td class="mut">runs</td><td>anytime, by hand</td><td>every audit</td><td>every audit</td></tr>'+
+ '<tr><td class="mut">feeds headline numbers</td><td class="warn">no</td><td class="warn">no — discovery only</td><td class="ok">yes + trend/diff</td></tr>'+
+ '<tr><td class="mut">versioned</td><td>no</td><td>yes</td><td>yes · immutable</td></tr></table>';
+ var pcards=S.personas.map(pcard).join("")+
+  '<div class="pcard" style="display:flex;align-items:center;justify-content:center;border-style:dashed;cursor:pointer" onclick="App.pEdit(null)"><div style="text-align:center"><div style="font-size:26px">＋</div><b>New persona</b><div class="note">clone-and-edit is the flow</div></div></div>';
+ var labHtml="";
+ if(S.lab.length){
+  labHtml='<div class="card mt24"><div class="lbl">EXPLORATORY RESULTS (never in the trend until tracked)</div>'+S.lab.map(function(lr){
+   return '<div class="mrow"><span class="mname" style="width:200px">'+lr.em+" <b>"+esc(lr.name)+'</b></span><span class="bar" style="flex:1"><i style="width:'+(lr.t3*3)+'%"></i></span><b class="mono">top-3 '+lr.t3+'%</b>'+
+   '<button class="btn sm '+(lr.tracked?"ghost":"")+'" '+(lr.tracked?"disabled":"")+' onclick="App.pTrack(\''+lr.pid+'\')">'+(lr.tracked?"TRACKED ✓":"TRACK")+"</button></div>"+
+   lr.quotes.map(function(t){return '<div class="qbox">"'+esc(t)+'"<div class="qmeta">exploratory · simulated shopper · '+MODEL.name+"</div></div>"}).join("")}).join("")+
+  '<div class="note">TRACK is one-way and logged: once tracked, a persona runs 2 OPEN missions in every audit — including when results are unflattering. PROMOTE unlocks at the next PROMPT_VERSION bump.</div></div>';
+ }
+ return phead("Personas & Explore",'Ad-hoc stress tests: clone a shopper persona, edit its system prompt, run missions live. Explore anything — but only the frozen pack feeds the trend. (Personas change <b>who asks</b>; to add a tracked <b>question</b>, use the Probe Lane on the New Audit screen.)')+
+ '<div class="card"><div class="lbl">THREE LANES</div>'+lanes+
+  '<div class="note mt8">Exploratory runs this session: <b class="mono">'+S.expl+"</b> (transparency: you can always find a persona where you win — the count keeps that honest)</div></div>"+
+ '<div class="lbl mt24">PERSONA LIBRARY</div><div class="g3">'+pcards+"</div>"+
+ '<div class="card mt24" id="quickrun"><div class="lbl">QUICK-RUN · THE LIVE DEMO BEAT (persona × city × category × occasion)</div>'+
+  '<div class="row" style="align-items:flex-end">'+
+  '<div style="flex:1;min-width:150px"><div class="note">persona</div><select id="qp">'+S.personas.map(function(p){return '<option value="'+p.id+'">'+p.em+" "+p.name+"</option>"}).join("")+"</select></div>"+
+  '<div style="flex:1;min-width:130px"><div class="note">city</div><input type="text" id="qc" value="'+esc(S.qcity)+'"></div>'+
+  '<div style="flex:1;min-width:130px"><div class="note">category</div><input type="text" id="qk" value="'+esc(S.qcat)+'"></div>'+
+  '<div style="flex:1;min-width:150px"><div class="note">occasion</div><input type="text" id="qo" value="'+esc(S.qocc)+'"></div>'+
+  '<button class="btn" id="qbtn" onclick="App.qRun()">▶ RUN</button></div>'+
+  '<pre id="stream" class="mono mt8" style="white-space:pre-wrap;background:#070b12;border:1px solid var(--line);border-radius:8px;padding:12px;min-height:52px;color:var(--mut);font-size:12.5px">answer will stream here…</pre>'+
+  '<div id="qex"></div></div>'+labHtml;
+}
+function pcard(p){
+ var b=(p.status==="CORE")?'<span class="badge b-pf">CORE</span>':(p.status==="TRACKED"?'<span class="badge b-true">TRACKED</span>':'<span class="badge b-ex">EXPLORATORY</span>');
+ return '<div class="pcard"><div class="row" style="justify-content:space-between;align-items:center"><span class="em">'+p.em+"</span>"+b+"</div>"+
+ "<b>"+esc(p.name)+'</b> <span class="dimc" style="font-size:12px">v'+p.ver+'</span><div class="note">'+esc(p.tag)+"</div>"+
+ '<div class="row mt8"><button class="btn ghost sm" onclick="App.pView(\''+p.id+'\')">view prompt</button><button class="btn sm" onclick="App.pEdit(\''+p.id+'\')">Clone & edit</button></div>'+
+ ((p.status==="EXPLORATORY")?'<button class="btn ghost sm mt8" onclick="App.pRun(\''+p.id+'\')">▶ run 3 missions × 1 model</button>':"")+"</div>";
+}
+
+/* ============ ABOUT & TOUR ============ */
+function rAbout(){
+ var loop=[
+  ["Measure","Run the frozen pack: 12 missions × 10 runs on the pinned model = 120 stored answers. Every number in the product derives from these.","audit"],
+  ["Report","Mention rate, top-3, recommended-outright, competitor displacement — each with a 95% CI, each drillable to verbatim runs.","vis"],
+  ["Surface claims","Checkable statements are clustered and linked to quotes. Opinions are filtered out by design.","claims"],
+  ["Verify","TRUE / FALSE / UNKNOWN from the person who actually knows — with provenance stamped on every verdict.","claims"],
+  ["Act","FALSE → correct the record. TRUE → fix the reality. UNKNOWN → name the API that would settle it.","report"],
+  ["Re-measure","Same instrument next audit; the diff shows whether the fix moved the number.","hist"]];
+ var gloss=[
+  ["Audit","One full pass of the instrument: 12 missions × 10 runs on the pinned model = 120 stored answers."],
+  ["Mission","A frozen shopping question in the core pack."],
+  ["OPEN / DIRECT","OPEN = target not named → feeds headline visibility. DIRECT = target named → feeds the claims queue only. Never mixed."],
+  ["Run","One model answer to one mission. Stored verbatim and immutable, with snapshot + hash."],
+  ["Mention rate","Share of runs where the target appears. Always shown with a 95% CI."],
+  ["Top-3 / Recommended","Target appears in the first three names / is ranked first outright."],
+  ["95% CI","The noise band from n=120 binary runs. Deltas inside it are labeled “trend, not proof”."],
+  ["Run self-agreement","How often the same model repeats itself across runs — the instrument’s noise floor with a single model."],
+  ["Claim","A checkable statement extracted from runs, clustered across runs, linked to verbatim quotes."],
+  ["OPINION","Preference language (“best”, “good value”) — excluded from the verification queue by design."],
+  ["PUBLIC FACT","Checkable against public pages (store count, delivery minimum, scheme names) — pre-checkable."],
+  ["RETAILER-ONLY","Only the retailer can know (price baskets, range depth, loyalty rules). If UNKNOWN, the claim names the feed that would auto-verify it."],
+  ["Verdict","TRUE / FALSE / UNKNOWN recorded by the retailer, with optional note + correction. Provenance stamped server-side."],
+  ["RESOLVED","A claim whose observed frequency dropped after the fix shipped — confirmed by a later audit, never inferred silently."],
+  ["Persona","A simulated shopper (system prompt) used as a sensitivity probe — “visibility under price stress”, not a demographic measurement."],
+  ["PROBE","A tracked question that runs every audit in discovery-only scope (badged, excluded from headline n). Promotable to core only at a pack freeze — one-way, logged, no delete."],
+  ["EXPLORE / TRACKED / CORE","Three lanes: ad-hoc → runs every audit (one-way, logged) → frozen into the pack version."],
+  ["Pack v1 (frozen)","The immutable question set. Edits create v2; diffs require identical versions on both sides."],
+  ["Lineage","Every answer is labeled live / cache / simulated. Nothing falls back silently."]];
+ return phead("About Argus","What Argus is, who it is for, and what every word on this site means.")+
+  '<div class="lead">AI assistants are becoming a discovery channel: they answer shopping questions with a short named list, and being absent from that list means being out of the consideration set entirely. Nobody at a retailer owns that view today. Argus turns it into a measured, verified, tracked number.</div>'+
+ '<div class="card" style="border-color:var(--acc)"><div class="row" style="justify-content:space-between;align-items:center">'+
+ '<div><b>First time here?</b> Take the guided tour — it walks the real screens and explains each one.</div>'+
+ '<button class="btn" onclick="App.tourStart()">▶ Start the guided tour ('+TOUR.length+" steps)</button></div></div>"+
+ '<div class="card mt24"><div class="lbl">THE LOOP — CLICK ANY STAGE</div>'+
+ loop.map(function(l,i){return '<div class="step" style="margin-bottom:8px" onclick="App.nav(\''+l[2]+'\')"><span class="n">STAGE '+(i+1)+"</span><span class=\"t\">"+l[0]+'</span><span class="d">'+l[1]+"</span></div>"}).join("")+"</div>"+
+ '<div class="card mt24"><div class="lbl">GLOSSARY — WHAT THINGS MEAN</div><table>'+
+ gloss.map(function(g){return "<tr><td style=\"width:190px\"><b>"+esc(g[0])+"</b></td><td class=\"mut\">"+esc(g[1])+"</td></tr>"}).join("")+"</table></div>"+
+ '<div class="g2 mt16"><div class="card"><div class="lbl">ROADMAP LADDER (SAY IT, DON\u2019T BUILD IT)</div><table>'+
+ '<tr><th></th><th>Loop</th><th>Verification</th></tr>'+
+ '<tr><td><b>POC</b> (this)</td><td>Observe</td><td>Retailer verifies manually</td></tr>'+
+ '<tr><td><b>V2</b></td><td>Observe</td><td>Auto-verify via retailer feeds — the UNKNOWN bucket is the itemized integration backlog</td></tr>'+
+ '<tr><td><b>V3</b></td><td>Observe</td><td>Verify → diagnose → recommend fixes → continuous monitoring; agentic commerce readiness</td></tr></table></div>'+
+ '<div class="card"><div class="lbl">WHAT IS REAL / SIMULATED IN THIS POC</div><div class="note" style="font-size:12.5px">'+
+ "Real end-to-end: the loop, extraction, stats, verdict flow, persistence, diffing.<br>"+
+ "Simulated: the model answers themselves in this file (labeled on every screen) — in production they come from live Vertex calls with cache.<br>"+
+ "The one seam: the retailer is the operator wearing the 🏪 hat — stated plainly, because a human verdict is a legitimate data source.<br>"+
+ "We surface claims; we never author them. Truth status is supplied by the retailer.</div></div></div>"+
+ '<div class="note mt16">Questions while exploring? '+nbtn("🤖 Ask Buddy","chat")+"</div>";
+}
+
+/* ============ CHAT — BUDDY ============ */
+var CHIPS=[
+ ["UNDERSTANDING THE NUMBERS",["Why is our mention rate where it is?","Why does Otto score so low?","What does the confidence interval mean?","What do the grid colors mean?","What does trend not proof mean?","Who are our biggest competitors in answers?"]],
+ ["USING THE SITE",["How do I verify a claim?","How do I add a probe?","How do I add my own question?","Show me how to use the site","What is an audit?"]],
+ ["STORY & HONESTY",["How did the gluten-free fix play out?","What is simulated in this POC?","What would auto-verification need?"]]];
+function rChat(){
+ var left=CHIPS.map(function(g){
+  return '<div class="lbl" style="margin-top:10px">'+g[0]+"</div>"+g[1].map(qbtn).join("")}).join("");
+ var thread=S.chat.map(function(m){return '<div class="msg '+m.who+'">'+(m.who==="you"?m.text:m.html)+"</div>"}).join("");
+ return phead("Ask Buddy",'The audit copilot. Answers are computed from the current audit (#'+S.latest+") — same engine as the screens, so numbers always reconcile.")+
+ '<div class="chatwrap"><div class="chatleft">'+left+"</div>"+
+ '<div class="chatmain"><div id="chatthread">'+thread+"</div>"+
+ '<div class="chatinrow"><input type="text" id="chatin" placeholder="Ask about metrics, claims, personas, probes, the tour…"><button class="btn" onclick="App.ask()">Send</button></div></div></div>';
+}
+/* ---- buddy answer builders (all computed from live state) ---- */
+function ansWhat(){return "<b>An audit</b> is one full pass of the instrument: the frozen pack of 12 shopping questions × 10 runs each on "+MODEL.name+" — 120 stored answers from which every metric, claim and quote is derived deterministically."+
+ '<div class="note mt8">The loop: run → visibility report → claims board → your verdicts → verified report → diff vs last audit. Two seeded audits exist; press RUN on New Audit to generate #3.</div>'+nbtn("Open New Audit","audit")}
+function ansMention(){var aid=S.latest,A=agg(aid),g=grid(aid);
+ var rows=MISSIONS.map(function(m,i){var k=0;g[i].forEach(function(t){if(t>0)k++});return{q:m.q,k:k,open:m.k==="OPEN"}});
+ rows.sort(function(a,b){return a.k-b.k});
+ var items=rows.map(function(r){return{label:(r.open?"":"DIRECT · ")+r.q,v:Math.round(r.k/RUNS*100),warn:r.k<=3}});
+ return "Mention rate is <b>"+fmt(A.m)+" ±"+A.ciM.toFixed(1)+"</b> (n="+A.n+", pack v1, "+MODEL.name+"). Here is every mission, worst first:"+
+ '<div class="mt8">'+svgBars(items)+"</div>"+
+ '<div class="note mt8">The amber rows are where the model most often skips us — those absent runs are exactly where the competitor names in the displacement table come from. Click the MENTION RATE tile in the Visibility Report to open the raw run matrix and read the verbatim answers.</div>'+nbtn("Open Visibility Report","vis")}
+function ansPersona(){var pm=PMX[Math.min(S.latest,3)];
+ var items=Object.keys(pm).map(function(k){return{label:k+" · "+(k==="Otto"?"eco-driven":k==="Penny"?"price-sensitive":k==="Dee"?"brand-loyal":k==="Nia"?"last-minute":k==="Sam"?"gluten-free":"family bulk"),v:pm[k],warn:pm[k]<12}});
+ return "Otto (eco-driven) sits at <b>"+pm.Otto+"% top-3</b> while Nia (last-minute) sits at <b>"+pm.Nia+"%</b> — a "+(pm.Nia-pm.Otto)+"-point persona gap."+
+ '<div class="mt8">'+svgBars(items)+"</div>"+
+ '<div class="note mt8">Framing matters: personas are <b>simulated shoppers — sensitivity probes</b>. The honest reading is “when the agent is told to prioritize eco criteria, our visibility collapses”, not “eco shoppers prefer Competitor X”. A persona where we win is marketing; a persona where we collapse is a diagnosis. Otto\u2019s is an ops signal: our sustainability data is thin for machines.</div>'+nbtn("Open Personas & Explore","lab")}
+function ansColors(){return "Each cell in the run grid is one model answer, color-coded by outcome:"+
+ '<div class="mt8">'+
+ '<div class="mrow"><span class="mcell t0"></span><span class="mut">not mentioned — we are absent from the shortlist (absence feeds the displacement table)</span></div>'+
+ '<div class="mrow"><span class="mcell t1"></span><span class="mut">mentioned — we appear, but outside the top 3</span></div>'+
+ '<div class="mrow"><span class="mcell t2"></span><span class="mut">top-3 — inside the shortlist people actually hear</span></div>'+
+ '<div class="mrow"><span class="mcell t3"></span><span class="mut">recommended — ranked first outright</span></div></div>'+
+ '<div class="note mt8">Same question, 10 independent runs: the row pattern is deliberately uneven, because model variance is real — it is the noise floor behind the confidence intervals. Probe rows appear badged alongside the core grid but never count toward the headline n.</div>'+nbtn("See the grid on New Audit","audit")}
+function ansCI(){var A=agg(S.latest);
+ return "Here is the mention rate with its 95% confidence interval, from n="+A.n+" runs:"+
+ '<div class="mt8">'+svgCI(A.m,Math.max(0,A.m-A.ciM),Math.min(100,A.m+A.ciM))+"</div>"+
+ '<div class="note mt8">With binary runs and n=120, the ±'+A.ciM.toFixed(1)+'pp band is irreducible sampling noise — the same model, same question, gives slightly different answers each run. That is why any delta smaller than the CI is auto-labeled <span class="badge b-unk">within noise — trend only</span> in History & Diff. It is computed, not copy-pasted.</div>'+nbtn("See it applied in History & Diff","hist")}
+function ansVerify(){return "<b>Verifying takes about a minute per claim:</b><br>1. Open the claim and read the verbatim quotes — every quote carries model, run and mission.<br>2. Check reality: PUBLIC FACTs against your own public pages; RETAILER-ONLY facts against your systems.<br>3. Pick <b>TRUE / FALSE / UNKNOWN</b>. On FALSE, write the correction the market should hear.<br>4. Save — provenance is stamped automatically and the Verified Report re-buckets itself."+
+ '<div class="note mt8">Right now <b>'+newCount()+"</b> claims are waiting. Opinions never reach this queue; UNKNOWN is always allowed and names the feed that would auto-verify the claim.</div>"+hbtn("Open Review Queue")}
+function ansOpenDirect(){return 'The pack has two mission kinds, and mixing them would corrupt the numbers:'+
+ '<div class="mt8"><span class="badge b-op">OPEN</span> <span class="mut">The retailer is NOT named — “best supermarkets in London”. These measure unprompted mindshare and feed the headline visibility metrics.</span></div>'+
+ '<div class="mt8"><span class="badge b-pf">DIRECT</span> <span class="mut">The retailer IS named — “does GreenBasket sell organic wine?”. These never feed headline %; they mine answers for claims (accuracy evidence, competitor comparisons) and feed the review queue.</span></div>'+
+ '<div class="note mt8">Why separate? Asked-about answers are inflated by the question itself. Comparing a DIRECT mention rate to an OPEN one would produce a meaningless headline.</div>'+nbtn("View the frozen pack","audit")}
+function ansNoise(){var sa=selfAgreement(S.latest);
+ return "Same model, same prompt, "+RUNS+" independent runs — and they do not agree perfectly. Run self-agreement right now: <b>"+sa+"%</b>."+
+ '<div class="note mt8">That disagreement is not a bug; it is the instrument\u2019s noise floor, and it is exactly where the confidence intervals come from in a single-model setup. The UI turns this into a rule: any delta inside the CI gets the badge below instead of a victory lap.</div>'+
+ '<div class="mt8"><span class="badge b-unk">within noise — trend only</span></div>'+nbtn("See the variance panel","vis")}
+function ansSEO(){return "<b>Related, but a different layer.</b><br>· SEO rank trackers measure a ranked list of links. AI assistants produce a <b>named shortlist of 3–5</b> — position 6 does not exist; absence means out of the consideration set.<br>· Links can\u2019t be false about you; assistants <b>state facts</b> — “they don\u2019t sell gluten-free own-brand” deflects customers before they ever reach your site.<br>· So Argus measures statements (with verbatim evidence), adds a verification loop, and tracks the same instrument over time.<br><br>SEO had rank trackers in 2004. This is that, for the answer layer."}
+function ansReal(){return "Real end-to-end: the loop itself, deterministic extraction, stats with CIs, verdict provenance, persistence, diffing.<br><br><b>Simulated in this POC file:</b> the model answers (labeled on every screen — SIMULATED MODEL OUTPUTS). In production they come from live Vertex calls with cache-first replay.<br><br><b>The one seam:</b> the retailer is the operator wearing the 🏪 hat — a human verdict is a legitimate data source, and that is stated plainly in the method notes. Nothing about a real retailer is ingested; Argus surfaces claims, it never authors them."}
+function ansGF(){var c6=null;S.claims.forEach(function(c){if(c.id==="c6")c6=c});
+ var b=rowM(2,"m8"),a=rowM(3,"m8");
+ return "<b>The gluten-free story — the loop closing:</b><br>The model claimed “"+esc(c6.text.toLowerCase())+"” (observed "+c6.obs+"). The retailer verified it <span class=\"badge b-false\">FALSE</span> — 42 own-brand GF lines launched in March — and the correction action was a structured-data push."+
+ '<div class="mt8">'+svgBars([{label:"audit #2 · before the fix",v:b*10,warn:true},{label:"audit #3 · after structured-data push",v:a*10}])+"</div>"+
+ '<div class="note mt8">'+(c6.resolved?'The claim is now <span class="badge b-res">RESOLVED</span> — the next audit showed the mention pattern move, which is the proof the fix worked.':'Run audit #3 from the New Audit screen and this movement becomes live in the diff.')+"</div>"+nbtn("See the diff","hist")}
+function ansAdd(){return "<b>Two ways to ask anything:</b><br>1. <b>Quick-Run</b> (below): pick a persona, type city / category / occasion, hit RUN — a live answer streams in and a claim candidate lands in the review queue.<br>2. <b>Clone a persona</b>: edit its system prompt (the linter blocks naming the audited retailer — try typing “"+RET+"” to see it), pass the smoke test, run 3 missions. Results badge as EXPLORATORY — never in the trend until you TRACK them (one-way, logged).<br><br>For a <b>permanently tracked question</b> that runs every audit, that is a probe — see the next suggestion."+
+ '<div class="mt8">'+nbtn("Open Personas & Explore","lab")+" "+qbtn("How do I add a probe?")+"</div>"}
+function ansProbe(){return "<b>Probes are tracked questions that run in every future audit</b> — the middle lane between one-off exploration and the frozen core pack.<br>1. Open "+nbtn("New Audit","audit")+" and find the <b>Probe Lane</b> card.<br>2. Click <b>＋ Add probe</b> and type a shopping question.<br>3. The linter auto-tags it: name "+RET+" and it is forced DIRECT (excluded from headline metrics); otherwise OPEN, discovery-only.<br>4. It runs 2 runs in every audit from now on, badged PROBE, never in the headline n=120.<br>5. If it proves stable and important, it is promoted to core at the next pack freeze (v1 → v2) — one-way and logged, no backfilling."+
+ '<div class="note mt8">Why no delete? Dropping a probe when its results turn unflattering would be cherry-picking. Probes persist until the next freeze.</div>'+nbtn("Open the Probe Lane","audit")}
+function ansTour(){return "The fastest path:<br>1. "+nbtn("Command Center","home")+" — the loop, click any stage.<br>2. "+nbtn("New Audit","audit")+" — press RUN, watch the grid fill (120 calls).<br>3. "+nbtn("Visibility Report","vis")+" — click any tile → raw runs → verbatim answer.<br>4. Flip the 🏪 hat on "+nbtn("Claims Board","claims")+" — verify a claim FALSE with a correction.<br>5. "+nbtn("Verified Report","report")+" → print. 6. "+nbtn("History & Diff","hist")+" → see a fix move the number.<br>7. "+nbtn("Personas & Explore","lab")+" → Quick-Run with any scenario.<br><br>Or let the tour drive:"+'<div class="mt8"><button class="btn" onclick="App.tourStart()">▶ Start the guided tour</button></div>'}
+function ansPack(){return "The instrument has three lanes:<br>· <b>CORE</b> — 12 frozen missions, immutable (v1). Runs every audit; feeds headline metrics and the trend. Editing creates v2, never mutates v1.<br>· <b>PROBE LANE</b> — user-added tracked questions (＋ Add probe on the New Audit screen). Runs every audit at 2 runs each, discovery only, never the trend. No delete — they persist until the next freeze.<br>· <b>EXPLORE</b> — personas and quick-runs, ad-hoc. Badged EXPLORATORY, excluded until tracked (one-way, logged).<br><br>Promotion is one-way and logged: probes or tracked personas enter core only at a pack version bump, and never backfill their trend lines."}
+function ansAPI(){var unk=S.claims.filter(function(c){return c.status==="UNKNOWN"});
+ var list=unk.map(function(c){return '<div class="mrow">· '+esc(c.needs||"—")+"</div>"}).join("");
+ return "<b>UNKNOWN claims are not dead ends — they are the V2 integration backlog, itemized.</b> Each one names the exact feed that would let Argus auto-verify it:"+
+ '<div class="mt8 note">'+(list||"— no UNKNOWN claims right now")+"</div>"+
+ '<div class="note mt8">Ladder: POC = retailer verifies manually (this). V2 = retailer grants feeds → verdicts fill automatically (source=API). V3 = diagnose → recommend fixes → continuous monitoring. The Verified Report\u2019s NEEDS AN API bucket is that sales conversation, written by the data itself.</div>'+nbtn("See NEEDS AN API","report")}
+function ansComp(){var items=COMPDISP.slice(0,6).map(function(c,i){return{label:c[0]+" — "+c[2],v:c[1],warn:i<2}});
+ return "Share of our "+(MISSIONS.length*RUNS)+" audited answers in which each competitor appears instead of us:"+
+ '<div class="mt8">'+svgBars(items)+"</div>"+
+ '<div class="note mt8">Tesco and Sainsbury\u2019s take the “default supermarket” slot; Ocado takes organic range and online; Aldi takes pure price. Each displacement is tied to the missions where it concentrates — that is what makes it actionable rather than anecdotal.</div>'+nbtn("Open the displacement table","vis")}
+function ansFallback(){return "I did not quite catch that. I am best at:<div class=\"mt8\">"+qbtn("Why is our mention rate where it is?")+qbtn("How do I verify a claim?")+qbtn("How do I add a probe?")+qbtn("Show me how to use the site")+"</div>"}
+function answerFor(t){t=t.toLowerCase();
+ var R=[[/(how.*use|tour|guided|walkthrough|start here)/,ansTour],
+  [/(otto|persona|shopper|eco|sensitivity)/,ansPersona],
+  [/(gluten|free from|resolved|resolv)/,ansGF],
+  [/(auto.?verif|needs.?feed|\bv2\b|which feed|api)/,ansAPI],
+  [/(verify|verdict|review queue|true.{0,3}false)/,ansVerify],
+  [/(probe\b|probes\b|probe lane)/,ansProbe],
+  [/(add my own|my own question|clone|quick.?run|new question|explore\b|own persona)/,ansAdd],
+  [/(colou?r|grid|legend|swatch|cells?|tiers?)/,ansColors],
+  [/(confidence|interval|error bar|\bci\b)/,ansCI],
+  [/(trend|noise|varianc|self.?agreement|stable|split)/,ansNoise],
+  [/(seo|rank track|google)/,ansSEO],
+  [/(simulat|fake|privacy|safe|real\b)/,ansReal],
+  [/(pack|frozen|track(ed)?\b|immutable|core\b)/,ansPack],
+  [/(competitor|displace|tesco|aldi|ocado|sainsbury|asda)/,ansComp],
+  [/(mention|why|perform|score|rate|low)/,ansMention],
+  [/(what is an audit|what does argus|about argus|argus do|how does.*work)/,ansWhat]];
+ for(var i=0;i<R.length;i++){if(R[i][0].test(t))return R[i][1]()}
+ return ansFallback()}
+
+/* ============ modal & toast ============ */
+function modal(html){var m=document.getElementById("modal");m.innerHTML='<div class="mback" onclick="App.mclose(event)"><div class="mcard" onclick="event.stopPropagation()">'+html+"</div></div>";m.classList.add("open")}
+function closeModal(){var m=document.getElementById("modal");m.classList.remove("open");m.innerHTML=""}
+function toast(msg,warn){var t=document.createElement("div");t.className="toast"+(warn?" warn":"");t.textContent=msg;document.getElementById("toasts").appendChild(t);setTimeout(function(){t.remove()},4200)}
+
+/* ============ actions ============ */
+var App={
+ nav:function(s){if(S.running){toast("audit in flight — wait for it",1);return}S.screen=s;renderApp()},
+ /* M7.5 — rail collapse and per-group collapse. Both are preferences, so they
+    persist. Neither is "the active screen": a console that restored the last
+    route would misrepresent what is on screen now. */
+ rail:function(){S.rail=!S.rail;try{localStorage.setItem("argus.nav.rail",S.rail?"1":"0")}catch(e){}renderChrome()},
+ tgroup:function(g){S.collapsed[g]=!S.collapsed[g];try{localStorage.setItem("argus.nav.groups",JSON.stringify(S.collapsed))}catch(e){}renderChrome()},
+ opunlock:function(){
+  var el=document.getElementById("oppass");if(!el)return;
+  if(S.op.failures>=5){toast("Too many failed attempts — cooldown.",1);return}
+  if(el.value==="argus-demo"){S.op.unlocked=true;S.op.failures=0;renderApp();toast("unlocked — operator actions available for this session");return}
+  S.op.failures++;el.value="";renderApp();
+  toast("Incorrect operator password ("+S.op.failures+"/5)",1)},
+ hat:function(h){S.hat=h;if(h==="retailer")S.screen="claims";renderApp()},
+ hatGo:function(){S.hat="retailer";S.screen="claims";renderApp()},
+ mclose:function(e){if(e.target.classList&&e.target.classList.contains("mback"))closeModal()},
+ closeModal:function(){closeModal()},
+ reset:function(){if(confirm("Reset all demo state?"))location.reload()},
+ lock:function(){S.op.unlocked=false;renderApp();toast("operator surface locked")},
+ /* tour */
+ tourStart:function(){S.tour={on:true,i:0};App.tourGo()},
+ tourGo:function(){var st=TOUR[S.tour.i];if(st.hat&&S.hat!==st.hat)S.hat=st.hat;S.screen=st.s;renderApp()},
+ tourNext:function(){if(S.tour.i<TOUR.length-1){S.tour.i++;App.tourGo()}else App.tourEnd()},
+ tourPrev:function(){if(S.tour.i>0){S.tour.i--;App.tourGo()}},
+ tourEnd:function(){S.tour={on:false,i:0};renderApp();toast("Tour ended — the About page has the full glossary")},
+ pack:function(){
+  var rows=MISSIONS.map(function(m,i){
+   return '<div class="mrow"><span class="mono dimc">'+("0"+(i+1)).slice(-2)+'</span><span class="badge '+(m.k==="DIRECT"?"b-pf":"b-op")+'">'+m.k+'</span><span style="font-size:12.5px">'+esc(m.q)+"</span></div>"}).join("");
+  var prows=S.probes.map(function(p){
+   return '<div class="mrow"><span class="badge b-ex">PROBE</span><span class="badge '+(p.k==="DIRECT"?"b-pf":"b-op")+'">'+p.k+'</span><span style="font-size:12.5px">'+esc(p.q)+'</span><span class="note" style="margin-left:auto">'+p.runs+" runs · discovery only</span></div>"}).join("");
+  modal('<div class="lbl">FROZEN PROMPT PACK v1 · IMMUTABLE (editing creates v2)</div>'+rows+
+  '<div class="lbl mt16">PROBE LANE (tracked · discovery-only · promotable at next freeze)</div>'+prows+
+  '<div class="note mt8">OPEN = retailer not named → feeds visibility %. DIRECT = retailer named → feeds the claims queue only. Mixing the two would corrupt the headline numbers. Core is immutable; the only path in is probe → promote at a pack freeze.</div>')},
+ valReport:function(){
+  modal('<div class="lbl">MODEL VALIDATION · '+MODEL.name+" · snapshot "+MODEL.ver+" · frozen into .env.example</div>"+
+  '<table><tr><th>Check</th><th>Result</th></tr>'+
+  '<tr><td>JSON validity</td><td class="ok mono">100% (30/30)</td></tr>'+
+  '<tr><td>AgentAnswer schema pass</td><td class="ok mono">98.3%</td></tr>'+
+  '<tr><td>Refusals</td><td class="ok mono">0%</td></tr>'+
+  '<tr><td>Latency p50 / p95</td><td class="mono">0.6s / 1.9s</td></tr>'+
+  '<tr><td>Run self-agreement (audit grid)</td><td class="mono">'+selfAgreement(S.latest)+"%</td></tr></table>"+
+  '<div class="note mt8">Single-model instrument: findings characterize what THIS model says across runs — not consensus across the agent population. Gemini powers Google\u2019s AI search experiences (AI Overviews / AI Mode), so it is the highest-reach assistant to measure first. Multi-model breadth is roadmap.</div>')},
+ /* audit run (core + probes) */
+ run:function(){
+  if(S.running)return;S.running=true;
+  var aid=latestId()+1,g=grid(aid),cells=[];
+  g.forEach(function(row,i){row.forEach(function(t,j){cells.push([i,j,t,false])})});
+  S.probes.forEach(function(p,pi){for(var j=0;j<p.runs;j++)cells.push([pi,j,tier(aid,p.id,j),true])});
+  var probeCalls=S.probes.reduce(function(a,p){return a+p.runs},0);
+  var total=cells.length,k=0,log=document.getElementById("runlog");log.innerHTML="";
+  var iv=setInterval(function(){
+   for(var x=0;x<4&&k<total;x++,k++){
+    var mi=cells[k][0],j=cells[k][1],t=cells[k][2],isP=cells[k][3];
+    var el=document.getElementById(isP?("pc_"+S.probes[mi].id):("gc_"+mi+"_"+j));if(el)el.className="mcell t"+t;
+    if(k%9===0){
+     var mid=isP?S.probes[mi].id:MISSIONS[mi].id;
+     var label=isP?("probe "+mid+" · run"+(j+1)):(mid+" · run"+(j+1));
+     var latency=Math.round(200+h32(aid+"|"+mid+"|"+j)*1400);
+     log.innerHTML+="&gt; "+MODEL.name+" · "+label+" → 200 OK · AgentAnswer ✓ · "+latency+"ms<br>";
+     if(h32(aid+"|"+mid+"|"+j)<0.05)log.innerHTML+="&gt; 429 rate-limited → retry 2/3 ✓<br>";
+     log.scrollTop=1e6}}
+   var p=document.getElementById("pgr");if(p)p.textContent=Math.round(k/total*100)+"%";
+   if(k>=total){clearInterval(iv);S.running=false;
+    S.audits.push({id:aid,when:"just now",ver:"v1"});S.latest=aid;
+    if(aid===3&&!S.a3done){S.a3done=true;CNEW3.forEach(function(c){S.claims.push(clone(c))});
+     var c6=null;S.claims.forEach(function(c){if(c.id==="c6")c6=c});if(c6)c6.resolved=true}
+    var d=document.getElementById("rundone");if(d)d.innerHTML='<b class="ok">audit #'+aid+" complete.</b>";
+    toast("Audit #"+aid+" complete — headline n=120 + "+probeCalls+" probe obs · "+(aid===3?"3 new claims · GF correction now visible":"no new claim types"));
+    setTimeout(function(){App.nav("vis")},900)}},26)},
+ /* drill-down (core pack only — probes are discovery) */
+ drill:function(mk){
+  var aid=S.latest,a=agg(aid),g=grid(aid);
+  if(mk==="comp"){
+   var rows=COMPDISP.map(function(c){return "<tr><td><b>"+esc(c[0])+"</b></td>"+'<td class="mono">'+c[1]+'%</td><td class="mut">'+esc(c[2])+"</td></tr>"}).join("");
+   modal('<div class="lbl">COMPETITOR SHARE OF ANSWERS · AUDIT #'+aid+" · "+a.comp+'%</div><table><tr><th>Competitor</th><th>Share</th><th>Displaces us on</th></tr>'+rows+'</table><div class="note mt8">Share of the 120 audited answers in which each competitor appears.</div>');return}
+  var map={m:["MENTION RATE",a.m,a.ciM,1],t3:["TOP-3 VISIBILITY",a.t3,a.ciT,2],rec:["RECOMMENDED OUTRIGHT",a.rec,a.ciR,3]};
+  var info=map[mk];if(!info)return;
+  var rows=MISSIONS.map(function(m,i){var r=g[i],cells="";
+   for(var j=0;j<RUNS;j++){var t=r[j],show=(t>=info[3])?t:0;var run=j+1;
+    cells+='<span class="mcell t'+show+'" title="'+m.id+" · run"+run+'" onclick="App.cellq(\''+aid+"','"+m.id+"',"+run+","+t+')"></span>'}
+   var n=0;for(var jj=0;jj<RUNS;jj++)if(r[jj]>=info[3])n++;
+   return '<div class="mrow"><span class="mname" title="'+esc(m.q)+'">'+esc(m.q)+"</span><span>"+cells+"</span>"+'<span class="mono dimc" style="margin-left:8px">'+n+"/"+RUNS+"</span></div>"}).join("");
+  modal('<div class="lbl">EVIDENCE — '+info[0]+" · AUDIT #"+aid+" · "+fmt(info[1])+" · 95% CI ±"+info[2].toFixed(1)+" · n="+a.n+" · "+MODEL.name+"</div>"+
+  '<div class="legend"><span><i class="mcell t0" style="cursor:default"></i>not mentioned</span><span><i class="mcell t1" style="cursor:default"></i>mentioned</span><span><i class="mcell t2" style="cursor:default"></i>top-3</span><span><i class="mcell t3" style="cursor:default"></i>recommended</span><span class="dimc">click any cell for the verbatim answer</span></div>'+rows)},
+ cellq:function(aid,mi,run,t){
+  var M=null;MISSIONS.forEach(function(m){if(m.id===mi)M=m});
+  var hit=t>0;var txt=hit?HIT[mi]:MISS[mi];
+  var label=t===0?"NOT MENTIONED":(t===1?"MENTIONED":(t===2?"TOP-3":"RECOMMENDED"));
+  modal('<div class="lbl">VERBATIM TRANSCRIPT · '+label+'</div><div class="qbox">"'+esc(txt)+
+  '"<div class="qmeta">'+MODEL.name+" · snapshot "+MODEL.ver+" · run "+run+"/"+RUNS+' · mission: "'+esc(M.q)+'" · audit #'+aid+" · sha256:"+h32(mi+"|"+run).toString(16).slice(0,8)+"…</div></div>"+
+  (hit?"":'<div class="note">Absence is also evidence: competitor-heavy answers like this are why the displacement matrix looks the way it does. Same prompt, different run → possibly a different verdict; that variance is the CI.</div>'))},
+ /* claims */
+ filter:function(f){S.filter=f;renderApp()},
+ openClaim:function(id){
+  var c=null;S.claims.forEach(function(x){if(x.id===id)c=x});if(!c)return;
+  S.draftV=(c.status==="NEW")?null:c.status;
+  var tb=(c.type==="RETAILER-ONLY")?'<span class="badge b-ro">RETAILER-ONLY</span>':(c.type==="PUBLIC FACT"?'<span class="badge b-pf">PUBLIC FACT</span>':'<span class="badge b-op">OPINION</span>');
+  var quotes=c.quotes.map(function(qq){
+   var M=null;MISSIONS.forEach(function(m){if(m.id===qq.mi)M=m});
+   return '<div class="qbox">"'+esc(qq.text)+'"<div class="qmeta">'+MODEL.name+" · run "+qq.run+"/"+RUNS+' · mission "'+esc(M?M.q:"exploratory")+"\"</div></div>"}).join("");
+  var apiAsk=(c.type==="RETAILER-ONLY"&&c.needs)?'<div class="note mt8" style="border:1px dashed var(--vio);border-radius:8px;padding:8px 12px;color:var(--vio)">To auto-verify this claim we\u2019d need: <b>'+esc(c.needs)+"</b> — that\u2019s the V2 API conversation, itemized.</div>":"";
+  var pre=(c.precheck)?'<div class="note mt8 ok">Public fact — pre-checkable against your store locator / pricing page before a human even looks.</div>':"";
+  if(c.type==="OPINION"){
+   modal(tb+"<h2 style='margin-top:10px'>"+esc(c.text)+'</h2><div class="note">observed '+(c.obs||"")+" · first seen audit #"+c.first+"</div>"+quotes+
+   '<div class="note mt16">This is an <b>opinion</b> — tagged at extraction, excluded from the review queue by design. It still feeds competitor analysis.</div>');return}
+  modal(tb+"<h2 style='margin-top:10px'>"+esc(c.text)+'</h2><div class="note">observed '+(c.obs||"")+" · first seen audit #"+c.first+(c.expl?" · sourced from an EXPLORATORY run":"")+"</div>"+
+  '<div class="lbl mt16">VERBATIM EVIDENCE ('+c.quotes.length+")</div>"+quotes+apiAsk+pre+
+  '<div class="lbl mt16">RETAILER VERIFICATION</div><div class="vbtns">'+
+  '<button class="vbtn '+(S.draftV==="TRUE"?"on-true":"")+'" id="vT" onclick="App.vset(\'TRUE\')">✓ TRUE</button>'+
+  '<button class="vbtn '+(S.draftV==="FALSE"?"on-false":"")+'" id="vF" onclick="App.vset(\'FALSE\')">✗ FALSE</button>'+
+  '<button class="vbtn '+(S.draftV==="UNKNOWN"?"on-unknown":"")+'" id="vU" onclick="App.vset(\'UNKNOWN\')">? UNKNOWN</button></div>'+
+  '<div id="corrWrap" style="display:'+(S.draftV==="FALSE"?"block":"none")+'"><div class="note">Correct the record — what should the market hear instead?</div><textarea id="corr">'+(c.corr?esc(c.corr):"")+"</textarea></div>"+
+  '<div class="note mt8">Evidence / comment (optional, becomes provenance)</div><textarea id="vnote">'+(c.note?esc(c.note):"")+"</textarea>"+
+  '<div class="row mt16"><button class="btn" onclick="App.vsave(\''+id+'\')">Save verdict</button>'+(c.vat?'<span class="note" style="align-self:center">verified '+esc(c.vat)+"</span>":"")+"</div>")},
+ vset:function(v){S.draftV=v;
+  var pairs=[["TRUE","vT","on-true"],["FALSE","vF","on-false"],["UNKNOWN","vU","on-unknown"]];
+  pairs.forEach(function(p){var b=document.getElementById(p[1]);if(b)b.className="vbtn "+(v===p[0]?p[2]:"")});
+  var cw=document.getElementById("corrWrap");if(cw)cw.style.display=(v==="FALSE")?"block":"none"},
+ vsave:function(id){
+  var c=null;S.claims.forEach(function(x){if(x.id===id)c=x});if(!c)return;
+  if(!S.draftV){toast("pick a verdict first",1);return}
+  c.status=S.draftV;
+  var n=document.getElementById("vnote");if(n&&n.value)c.note=n.value;
+  var co=document.getElementById("corr");if(co&&co.value)c.corr=co.value;
+  c.vat="just now · Retailer Review";closeModal();renderApp();
+  toast('"'+c.text.slice(0,42)+"…"+'" → '+c.status+" (provenance recorded)")},
+ printRep:function(){window.print()},
+ exportRep:function(){
+  var data={retailer:RET,model:MODEL.name,modelSnapshot:MODEL.ver,pack:"v1",generated:new Date().toISOString(),audit:agg(S.latest),
+  claims:S.claims.map(function(c){return{text:c.text,type:c.type,status:c.status,observed:c.obs,verifiedAt:c.vat||null,correction:c.corr||null,needsFeed:c.needs||null}})};
+  var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:"application/json"}));a.download="argus-verified-report.json";a.click();toast("report exported")},
+ /* personas */
+ pView:function(id){
+  var p=null;S.personas.forEach(function(x){if(x.id===id)p=x});if(!p)return;
+  modal('<div class="lbl">'+p.em+" "+esc(p.name.toUpperCase())+" · SYSTEM PROMPT v"+p.ver+" · "+p.status+'</div><pre class="mono" style="white-space:pre-wrap;font-size:12.5px;background:#070b12;border:1px solid var(--line);border-radius:8px;padding:14px">'+esc(p.prompt)+"</pre>"+
+  '<div class="note mt8">Anatomy: role & goal → constraints → decision criteria → output behaviour → anti-steering clause. The structured-output schema is appended by the app, never authored by users.</div>')},
+ pEdit:function(fromId){
+  var src=null;if(fromId){S.personas.forEach(function(x){if(x.id===fromId)src=x})}
+  if(!src)src=PSEED[0];
+  DRAFT={id:"p"+(S.pid++),name:src.name+"2",em:src.em,tag:src.tag,ver:1,status:"EXPLORATORY",prompt:src.prompt};LINTOK=false;
+  var ems=["🪙","🎀","⏱","👨‍👩‍👧","🌱","🌾","🐶","🏋️","🎁","🍷"];
+  var emOpts=ems.map(function(e){return "<option "+(e===DRAFT.em?"selected":"")+">"+e+"</option>"}).join("");
+  modal('<div class="lbl">NEW PERSONA · cloned from '+esc(src.name)+" → EXPLORATORY until tracked</div>"+
+  '<div class="row mt8"><div style="flex:1"><div class="note">name</div><input type="text" id="pname" value="'+esc(DRAFT.name)+'" oninput="App.plint()"></div>'+
+  '<div style="width:110px"><div class="note">icon</div><select id="pem">'+emOpts+"</select></div></div>"+
+  '<div class="note mt8">system prompt (5 parts: role · constraints · criteria · output behaviour · anti-steering)</div>'+
+  '<textarea id="pprompt" style="min-height:150px" oninput="App.plint()">'+esc(DRAFT.prompt)+"</textarea>"+
+  '<div class="lint" id="lint"></div><div id="smoke"></div>'+
+  '<div class="row mt16"><button class="btn" id="psave" onclick="App.pSave()">Save & smoke-test</button><button class="btn ghost" onclick="App.closeModal()">Cancel</button></div>');
+  App.plint()},
+ plint:function(){
+  var tp=document.getElementById("pprompt"),np=document.getElementById("pname"),el=document.getElementById("lint");
+  if(!tp||!el)return;
+  var t=tp.value+(np?np.value:"");var msgs=[];
+  if(t.indexOf(RET)>=0)msgs.push('<span class="err">✗ persona must not name the audited retailer ("'+RET+'") — that contaminates the observation. Save blocked.</span>');
+  if(t.length<60)msgs.push('<span class="warn">⚠ too short to constrain behaviour — aim for ~80 words across the 5 parts.</span>');
+  if(!/never favour|never claim/i.test(t))msgs.push('<span class="warn">⚠ missing the anti-steering / no-AI clauses from the anatomy.</span>');
+  if(!msgs.length)msgs.push('<span class="ok">✓ linter clean — no retailer naming, anti-steering present.</span>');
+  el.innerHTML=msgs.join("<br>");LINTOK=(t.indexOf(RET)<0)},
+ pSave:function(){
+  if(!DRAFT)return;
+  if(!LINTOK){toast("linter blocks save — fix the prompt",1);return}
+  var np=document.getElementById("pname"),pe=document.getElementById("pem"),tp=document.getElementById("pprompt");
+  if(np&&np.value)DRAFT.name=np.value;if(pe)DRAFT.em=pe.value;if(tp)DRAFT.prompt=tp.value;
+  var sm=document.getElementById("smoke");if(sm)sm.innerHTML='<div class="note">smoke run: 1 cheap call to '+MODEL.name+"…</div>";
+  var btn=document.getElementById("psave");if(btn)btn.disabled=true;
+  setTimeout(function(){
+   if(sm)sm.innerHTML='<div class="note">role-play ✓ &nbsp; schema (AgentAnswer) ✓ &nbsp; retailer-leak ✓ none</div>';
+   setTimeout(function(){S.personas.push(DRAFT);DRAFT=null;closeModal();renderApp();toast("persona saved as EXPLORATORY — run it to see results")},700)},900)},
+ pRun:function(pid){
+  var p=null;S.personas.forEach(function(x){if(x.id===pid)p=x});if(!p)return;
+  var rows="";for(var i=0;i<3;i++){
+   rows+='<div class="mrow"><span class="mname" style="width:280px">'+esc(MISSIONS[i].q)+'</span><span><span class="mcell t0" id="pe_'+i+'_1"></span></span></div>'}
+  modal('<div class="lbl">EXPLORATORY RUN · '+p.em+" "+esc(p.name)+" · 3 missions × 1 model × 1 run = 3 calls</div>"+rows+'<div class="note mt8" id="pest">running…</div>');
+  var k=0;var iv=setInterval(function(){
+   if(k<3){var t=ptier(pid,MISSIONS[k].id,1);
+    var el=document.getElementById("pe_"+k+"_1");if(el)el.className="mcell t"+t;k++}
+   else{clearInterval(iv);
+    var m=15+Math.round(h32(pid+"m")*40),t3=Math.max(0,m-14+Math.round(h32(pid+"t")*10));
+    S.expl++;
+    S.lab.unshift({pid:pid,name:p.name,em:p.em,m:m,t3:t3,tracked:false,quotes:[
+     "As "+p.name+", I'd shortlist Ocado first — but if own-brand quality holds, "+RET+" is a credible second.",
+     "Honestly, for my criteria, "+RET+" only appears once I get past the big names."]});
+    closeModal();renderApp();toast(p.name+" results in — EXPLORATORY, excluded from trend")}},260)},
+ pTrack:function(pid){
+  S.lab.forEach(function(l){if(l.pid===pid)l.tracked=true});
+  renderApp();toast("tracked — runs 2 OPEN missions in every audit from now on. one-way, logged.")},
+ /* probes */
+ probeAdd:function(){
+  modal('<div class="lbl">ADD PROBE — runs in every future audit (discovery only, never headline)</div>'+
+  '<div class="note mt8">question</div><textarea id="prq" oninput="App.probeLint()"></textarea><div class="lint" id="prlint"></div>'+
+  '<div class="row mt16"><button class="btn" onclick="App.probeSave()">Add to probe lane</button><button class="btn ghost" onclick="App.closeModal()">Cancel</button></div>');
+  App.probeLint()},
+ probeLint:function(){
+  var el=document.getElementById("prlint");if(!el)return;
+  var t=document.getElementById("prq").value.trim();
+  var tag=(t.indexOf(RET)>=0)?"DIRECT":"OPEN";
+  el.innerHTML=(t.length<15)?'<span class="warn">⚠ too short to be a real shopping question.</span>'
+   :'<span class="ok">✓ will run as <span class="badge '+(tag==="DIRECT"?"b-pf":"b-op")+'">'+tag+"</span>"+(tag==="DIRECT"?" — target named, auto-tagged DIRECT (excluded from headline metrics)":" — OPEN, discovery-only scope")+"</span>"},
+ probeSave:function(){
+  var t=document.getElementById("prq").value.trim();if(t.length<15){toast("too short to be a shopping question",1);return}
+  S.probes.push({id:"pr"+(S.pid++),q:t,k:(t.indexOf(RET)>=0)?"DIRECT":"OPEN",runs:2,added:"just now · you"});
+  closeModal();renderApp();toast("probe added — runs every future audit · discovery only · promotion at next pack freeze")},
+ /* quick-run */
+ qRun:function(){
+  var qc=document.getElementById("qc"),qk=document.getElementById("qk"),qo=document.getElementById("qo"),qp=document.getElementById("qp");
+  S.qcity=(qc&&qc.value)||"London";S.qcat=(qk&&qk.value)||"coffee";S.qocc=(qo&&qo.value)||"a gift";
+  var p=null;S.personas.forEach(function(x){if(x.id===qp.value)p=x});if(!p)p=S.personas[0];
+  var txt="Okay — thinking about "+S.qocc+" for "+S.qcat+" in "+S.qcity+": Tesco and Sainsbury's are the safe all-rounders. Ocado is strong on range. "+RET+" is worth shortlisting — its own-brand "+S.qcat+" is good value and delivery slots are usually same-day. If price is everything, Aldi still wins the base basket.";
+  var st=document.getElementById("stream");st.style.color="var(--txt)";st.textContent="";
+  var btn=document.getElementById("qbtn");btn.disabled=true;
+  var i=0;var iv=setInterval(function(){
+   i+=3;st.textContent=txt.slice(0,i);
+   if(i>=txt.length){clearInterval(iv);btn.disabled=false;S.expl++;
+    var text=RET+" "+S.qcat+" delivery slots are usually same-day";
+    var found=null;S.claims.forEach(function(c){if(c.text===text)found=c});
+    if(found){found.obs="2/2 runs · exploratory"}
+    else{S.claims.push({id:"q"+(S.pid++),text:text,type:"RETAILER-ONLY",status:"NEW",first:S.latest,obs:"1/1 run · exploratory",needs:"delivery slot config feed",expl:true,quotes:[q(1,"m1",txt)]})}
+    document.getElementById("qex").innerHTML=
+     '<div class="row mt8">'+["✓ "+RET+" mentioned — rank #2 of 5","competitors: Tesco · Sainsbury's · Ocado · Aldi","claim candidate → <b>RETAILER-ONLY · NEW</b> (added to the review queue)"].map(function(x){return '<span class="badge b-pf" style="font-size:11px;padding:5px 10px">'+x+"</span>"}).join("")+"</div>"+
+     '<div class="note mt8">persona: '+p.em+" "+esc(p.name)+" · "+MODEL.name+" · exploratory run #"+S.expl+" · <b>the review queue just grew from a question a juror made up</b> — check the badge on Claims Board.</div>";
+    renderChrome();toast("new claim candidate added to the review queue")}},24)},
+ /* chat */
+ ask:function(){var inp=document.getElementById("chatin");var t=(inp&&inp.value||"").trim();if(!t)return;if(inp)inp.value="";App.askq(t)},
+ askq:function(t){if(S.screen!=="chat"){S.screen="chat";renderApp()}
+  S.chat.push({who:"you",text:esc(t)});renderApp();
+  setTimeout(function(){S.chat.push({who:"bot",html:answerFor(t)});renderApp()},450)}
+};
+document.addEventListener("keydown",function(e){if(e.key==="Escape"){if(S.tour.on){App.tourEnd()}else closeModal()}});
+/* Restore the navigation preferences. Only the preferences — never the active
+   screen, and never anything that would let a stale value stand in for server
+   state. */
+try{var pr=localStorage.getItem("argus.nav.rail");if(pr==="1")S.rail=true;
+ var pg=localStorage.getItem("argus.nav.groups");if(pg)S.collapsed=JSON.parse(pg)||{}}catch(e){}
+try{renderApp()}catch(e){var d=document.getElementById("fatal");d.style.display="block";d.textContent="Argus failed to start: "+e.message}
+</script>
+</body>
+</html>
